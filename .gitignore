@@ -1,0 +1,50 @@
+# Environment
+venv/
+.env
+__pycache__/
+*.pyc
+.python-version
+
+# User content (your lecture data)
+inputs/*
+!inputs/.gitkeep
+pipeline/*
+!pipeline/.gitkeep
+
+# Large media files
+*.mp4
+*.mp3
+*.wav
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+
+# API responses
+**/api_responses.json
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Data cache
+.data_cache/
+
+# Python
+*.egg-info/
+dist/
+build/
+.eggs/
