@@ -31,7 +31,7 @@ SCRIPTS_DIR = Path(__file__).parent
 
 # Steps that require user review
 REVIEW_CHECKPOINTS = {
-    "segment": "Review plan.md and Video-N/content.txt files",
+    "segment": "Review segments.json and Video-N/content.txt files",
     "brief": "Review video_brief.md",
     "charts": "Review generated data charts in diagrams/",
     "script": "Review script.md",
@@ -98,6 +98,8 @@ class VideoState:
     visual_specs_exists: bool = False
     script_exists: bool = False
     video_exists: bool = False
+    slides_pdf_exists: bool = False
+    study_guide_pdf_exists: bool = False
 
     # Counts
     charts_needed: int = 0
@@ -256,6 +258,10 @@ def detect_video_state(video_dir: Path) -> VideoState:
     if audio_dir.exists():
         state.audio_found = len(list(audio_dir.glob("frame_*.mp3")))
 
+    # Check study guides
+    state.slides_pdf_exists = (video_dir / "slides.pdf").exists()
+    state.study_guide_pdf_exists = (video_dir / "study_guide.pdf").exists()
+
     return state
 
 
@@ -389,6 +395,11 @@ def print_video_status(state: VideoState, verbose: bool = True):
 
     print(f"  {status_symbol(state.compile_status)} final_video.mp4")
 
+    # Study guides (only show if video is complete)
+    if state.video_exists:
+        guides_status = StepStatus.COMPLETE if (state.slides_pdf_exists and state.study_guide_pdf_exists) else StepStatus.PENDING
+        print(f"  {status_symbol(guides_status)} study guides (slides.pdf, study_guide.pdf)")
+
 
 def print_step_header(step_num: int, total_steps: int, step_name: str, description: str):
     """Print step header."""
@@ -453,6 +464,33 @@ def prompt_checkpoint(step: str, video_dir: Path = None) -> bool:
             return False
 
 
+def prompt_study_guide(video_dir: Path) -> bool:
+    """
+    Prompt user to generate study guides.
+    Returns True if user wants to generate, False otherwise.
+    """
+    print()
+    print(f"  {Colors.CYAN}Create study guides?{Colors.RESET}")
+    print(f"  {Colors.DIM}Generates slides.pdf (frames only) and study_guide.pdf (frames + transcript){Colors.RESET}")
+    print()
+    print(f"  [{Colors.GREEN}y{Colors.RESET}] Yes, create study guides")
+    print(f"  [{Colors.YELLOW}n{Colors.RESET}] No, skip")
+    print()
+
+    while True:
+        try:
+            choice = input(f"  Choice [y/n]: ").strip().lower()
+            if choice in ("y", "yes"):
+                return True
+            elif choice in ("n", "no", ""):
+                return False
+            else:
+                print(f"  {Colors.RED}Invalid choice. Enter 'y' to create or 'n' to skip.{Colors.RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return False
+
+
 # =============================================================================
 # STEP EXECUTION
 # =============================================================================
@@ -505,7 +543,7 @@ def run_video_step(step: str, video_dir: Path, lecture_dir: Path) -> bool:
     video_num = video_dir.name.replace("Video-", "")
 
     if step == "brief":
-        return run_script("generate_briefs.py", [str(lecture_dir), "--videos", video_num])
+        return run_script("generate_briefs.py", [str(lecture_dir), "--video", video_num])
 
     elif step == "charts":
         # Check if charts are needed
@@ -627,15 +665,16 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
 
         print(f"\n  {Colors.GREEN}✓ {step} completed{Colors.RESET}")
 
-    # --- CHECKPOINT: Review Segmentation ---
+    # --- CHECKPOINT: Review Segmentation (only if we ran segment step) ---
 
-    week_state = detect_week_state(lecture_dir)
-
-    if week_state.segment_status == StepStatus.COMPLETE and review_mode:
-        if not prompt_checkpoint("segment"):
-            print(f"\n{Colors.YELLOW}Pipeline paused.{Colors.RESET}")
-            print(f"Resume with: python scripts/pipeline.py run {lecture_id}")
-            return
+    # Only prompt if we actually ran week steps (not if all were already complete)
+    if week_start_idx < len(WEEK_STEPS) and review_mode:
+        week_state = detect_week_state(lecture_dir)
+        if week_state.segment_status == StepStatus.COMPLETE:
+            if not prompt_checkpoint("segment"):
+                print(f"\n{Colors.YELLOW}Pipeline paused.{Colors.RESET}")
+                print(f"Resume with: python scripts/pipeline.py run {lecture_id}")
+                return
 
     # --- PHASE 2: Video-Level Steps ---
 
@@ -671,6 +710,12 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
         if next_step is None:
             if video_state.video_exists:
                 print(f"  {Colors.GREEN}✓ Video complete!{Colors.RESET}")
+                # Offer study guide generation if not already created
+                if review_mode and not (video_state.slides_pdf_exists and video_state.study_guide_pdf_exists):
+                    if prompt_study_guide(video_dir):
+                        success = run_script("generate_study_guide.py", [str(video_dir)])
+                        if success:
+                            print(f"  {Colors.GREEN}✓ Study guides created{Colors.RESET}")
                 continue
             else:
                 print(f"  {Colors.RED}Cannot proceed - content.txt missing{Colors.RESET}")
@@ -741,6 +786,13 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
             size_mb = final_video.stat().st_size / (1024 * 1024)
             print()
             print(f"  {Colors.GREEN}✓ Video complete: {final_video} ({size_mb:.1f} MB){Colors.RESET}")
+
+            # Offer study guide generation if not already created
+            if review_mode and not (video_state.slides_pdf_exists and video_state.study_guide_pdf_exists):
+                if prompt_study_guide(video_dir):
+                    success = run_script("generate_study_guide.py", [str(video_dir)])
+                    if success:
+                        print(f"  {Colors.GREEN}✓ Study guides created{Colors.RESET}")
 
     # --- All Done ---
     print()
@@ -864,6 +916,13 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
         size_mb = final_video.stat().st_size / (1024 * 1024)
         print()
         print_header("VIDEO COMPLETE", f"{final_video} ({size_mb:.1f} MB)")
+
+        # Offer study guide generation if not already created
+        if review_mode and not (video_state.slides_pdf_exists and video_state.study_guide_pdf_exists):
+            if prompt_study_guide(video_dir):
+                success = run_script("generate_study_guide.py", [str(video_dir)])
+                if success:
+                    print(f"  {Colors.GREEN}✓ Study guides created{Colors.RESET}")
 
 
 def show_status(path: str, video_num: int = None):

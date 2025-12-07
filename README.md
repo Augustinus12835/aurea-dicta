@@ -43,7 +43,8 @@ aurea_dicta/
 │   ├── generate_slides_gemini.py
 │   ├── generate_tts_elevenlabs.py
 │   ├── compile_video.py
-│   └── regenerate_frame.py
+│   ├── regenerate_frame.py
+│   └── generate_study_guide.py
 ├── templates/                 # Style guides and templates
 │   ├── teaching_style_guide.md
 │   ├── slide_style_guide.md
@@ -189,12 +190,14 @@ Lecture Video (2-3 hours)
 │ 7. Generate frame images        │
 │    >>> REVIEW CHECKPOINT        │
 │ 8. Generate TTS audio           │
-│    >>> REVIEW CHECKPOINT        │
 │ 9. Compile final video          │
+│ 10. Generate study guides       │
+│     (optional)                  │
 └─────────────────────────────────┘
          │
          ▼
    8-10 Concept Videos
+   + PDF Study Guides
 ```
 
 ### Review Checkpoints
@@ -231,7 +234,9 @@ pipeline/MY_LECTURE/
     │   ├── frame_0.mp3
     │   └── ...
     ├── final_video.mp4     # Compiled video
-    └── subtitles.srt       # Aligned subtitles
+    ├── subtitles.srt       # Aligned subtitles
+    ├── slides.pdf          # Frames-only PDF (optional)
+    └── study_guide.pdf     # Frames + transcript PDF (optional)
 ```
 
 ## Regenerating Frames
@@ -286,7 +291,26 @@ python scripts/generate_tts_elevenlabs.py pipeline/MY_LECTURE/Video-1/script.md
 
 # 9. Compile video
 python scripts/compile_video.py pipeline/MY_LECTURE/Video-1
+
+# 10. Generate study guides (optional)
+python scripts/generate_study_guide.py pipeline/MY_LECTURE/Video-1
 ```
+
+## Study Guides
+
+After video compilation, the pipeline offers to generate PDF study guides for students who prefer reading:
+
+- **slides.pdf**: All frames as a slideshow (images only)
+- **study_guide.pdf**: Frames with transcript text (landscape A4, stacked layout)
+
+The pipeline prompts "Create study guides? [y/n]" after each video completes. You can also generate them manually:
+
+```bash
+# Generate study guides for a video
+python scripts/generate_study_guide.py pipeline/MY_LECTURE/Video-1
+```
+
+Study guides use compressed images (1280px width, JPEG 80%) for reasonable file sizes (~1-2MB per video).
 
 ## Troubleshooting
 

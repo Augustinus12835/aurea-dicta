@@ -28,6 +28,10 @@ fredapi>=0.5.1            # FRED economic data
 # Text-to-Speech APIs
 elevenlabs>=1.0.0         # ElevenLabs TTS (voice cloning support)
 
+# PDF generation
+reportlab>=4.0.0          # PDF study guide generation
+pillow>=9.0.0             # Image handling for PDFs
+
 # SSL certificates
 certifi>=2023.0.0
 

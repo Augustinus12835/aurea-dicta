@@ -108,8 +108,7 @@ def transcribe_with_assemblyai(file_path: str) -> dict:
 
     aai.settings.api_key = ASSEMBLYAI_API_KEY
 
-    print(f"Uploading {Path(file_path).name} to AssemblyAI...", flush=True)
-    print("(Cloud transcription is much faster than local)", flush=True)
+    print(f"Uploading and transcribing {Path(file_path).name}...", flush=True)
 
     config = aai.TranscriptionConfig(
         speech_model=aai.SpeechModel.best,
