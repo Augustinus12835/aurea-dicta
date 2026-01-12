@@ -161,7 +161,7 @@ def generate_chart_code(
     response = client.generate(
         prompt=prompt,
         system="You are an expert Python developer specializing in data visualization. Write clean, working matplotlib code. Always include all imports and error handling.",
-        max_tokens=3000,
+        max_tokens=5000,
         temperature=0.2
     )
 
