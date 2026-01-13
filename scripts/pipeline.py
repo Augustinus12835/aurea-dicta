@@ -18,8 +18,9 @@ import json
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from enum import Enum
+from urllib.parse import urlparse, parse_qs
 
 
 # =============================================================================
@@ -44,6 +45,164 @@ WEEK_STEPS = ["transcribe", "clean", "segment"]
 
 # Video-level steps (run per video)
 VIDEO_STEPS = ["brief", "charts", "script", "frames", "tts", "compile"]
+
+
+# =============================================================================
+# YOUTUBE SUPPORT
+# =============================================================================
+
+def is_youtube_url(url: str) -> bool:
+    """Check if a string is a YouTube URL."""
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return parsed.netloc in ('www.youtube.com', 'youtube.com', 'youtu.be', 'm.youtube.com')
+    except Exception:
+        return False
+
+
+def extract_youtube_video_id(url: str) -> Optional[str]:
+    """Extract video ID from YouTube URL."""
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc == 'youtu.be':
+            return parsed.path[1:]
+        if parsed.netloc in ('www.youtube.com', 'youtube.com', 'm.youtube.com'):
+            if parsed.path == '/watch':
+                return parse_qs(parsed.query).get('v', [None])[0]
+            if parsed.path.startswith('/embed/'):
+                return parsed.path.split('/')[2]
+            if parsed.path.startswith('/v/'):
+                return parsed.path.split('/')[2]
+        return None
+    except Exception:
+        return None
+
+
+def fetch_youtube_transcript(video_id: str, output_dir: Path) -> Tuple[bool, str]:
+    """
+    Fetch YouTube transcript and save to transcript.json.
+
+    Returns:
+        (success, error_message)
+    """
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+    except ImportError:
+        return False, "youtube-transcript-api not installed. Run: pip install youtube-transcript-api"
+
+    try:
+        # Create API instance (new API style)
+        ytt_api = YouTubeTranscriptApi()
+
+        # Try to get transcript (prefer manual captions over auto-generated)
+        transcript_list = ytt_api.list(video_id)
+
+        transcript = None
+        language = 'en'
+
+        # Try manual transcripts first
+        try:
+            transcript = transcript_list.find_manually_created_transcript(['en', 'en-US', 'en-GB'])
+            print(f"  Found manual English transcript")
+        except Exception:
+            pass
+
+        # Fall back to auto-generated
+        if transcript is None:
+            try:
+                transcript = transcript_list.find_generated_transcript(['en', 'en-US', 'en-GB'])
+                print(f"  Found auto-generated English transcript")
+            except Exception:
+                pass
+
+        # If still no English, try any available and translate
+        if transcript is None:
+            try:
+                for t in transcript_list:
+                    transcript = t
+                    language = t.language_code
+                    print(f"  Found transcript in {t.language} - will use as-is")
+                    break
+            except Exception:
+                pass
+
+        if transcript is None:
+            return False, "No transcript available for this video"
+
+        # Fetch the actual transcript data
+        transcript_data = transcript.fetch()
+
+        # Convert to our format - transcript_data is now a FetchedTranscript object
+        # which is iterable and contains Snippet objects
+        snippets = list(transcript_data)
+        full_text = ' '.join([snippet.text for snippet in snippets])
+        total_duration = snippets[-1].start + snippets[-1].duration if snippets else 0
+
+        # Build segments in AssemblyAI-like format
+        segments = []
+        for snippet in snippets:
+            segments.append({
+                'text': snippet.text,
+                'start': int(snippet.start * 1000),  # Convert to milliseconds
+                'end': int((snippet.start + snippet.duration) * 1000),
+            })
+
+        # Save transcript.json
+        output_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = output_dir / "transcript.json"
+
+        with open(transcript_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'text': full_text,
+                'language': language,
+                'duration': int(total_duration * 1000),
+                'segments': segments,
+                'source': 'youtube',
+                'video_id': video_id
+            }, f, indent=2, ensure_ascii=False)
+
+        print(f"  Saved transcript: {transcript_path}")
+        print(f"  Duration: {total_duration/60:.1f} minutes")
+        print(f"  Segments: {len(segments)}")
+
+        return True, ""
+
+    except TranscriptsDisabled:
+        return False, "Transcripts are disabled for this video"
+    except NoTranscriptFound:
+        return False, "No transcript found for this video"
+    except Exception as e:
+        return False, f"Error fetching transcript: {str(e)}"
+
+
+def get_youtube_video_title(video_id: str) -> Optional[str]:
+    """Get video title from YouTube (for auto-generating lecture ID)."""
+    try:
+        import urllib.request
+        import json as json_module
+
+        # Use YouTube oEmbed API (no API key required)
+        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            data = json_module.loads(response.read().decode())
+            return data.get('title', '')
+    except Exception:
+        return None
+
+
+def sanitize_lecture_id(title: str) -> str:
+    """Convert a video title to a valid lecture ID."""
+    # Remove special characters, keep alphanumeric and spaces
+    sanitized = re.sub(r'[^\w\s-]', '', title)
+    # Replace spaces with underscores
+    sanitized = re.sub(r'\s+', '_', sanitized.strip())
+    # Limit length
+    if len(sanitized) > 50:
+        sanitized = sanitized[:50]
+    return sanitized or "YouTube_Video"
 
 
 # =============================================================================
@@ -518,9 +677,20 @@ def run_script(script_name: str, args: List[str], verbose: bool = True) -> bool:
         return False
 
 
-def run_week_step(step: str, lecture_dir: Path, source_video: Path = None) -> bool:
+def run_week_step(step: str, lecture_dir: Path, source_video: Path = None,
+                  youtube_video_id: str = None) -> bool:
     """Run a week-level pipeline step."""
     if step == "transcribe":
+        # Check if this is a YouTube source
+        if youtube_video_id:
+            print(f"  Fetching YouTube transcript...")
+            success, error = fetch_youtube_transcript(youtube_video_id, lecture_dir)
+            if not success:
+                print(f"{Colors.RED}  Error: {error}{Colors.RESET}")
+                return False
+            return True
+
+        # Otherwise, use local video file
         if source_video is None:
             # Try to find source video
             source_video = find_source_video(lecture_dir)
@@ -603,18 +773,53 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
     """
     Run the full pipeline for a lecture.
 
+    lecture_id can be:
+    - A lecture name (e.g., "MY_LECTURE") - looks for inputs/MY_LECTURE.mp4
+    - A YouTube URL (e.g., "https://www.youtube.com/watch?v=xxx") - fetches transcript
+
     1. Run week-level steps (transcribe, clean, segment)
     2. Checkpoint: Review segmentation
     3. For each video, run video pipeline with checkpoints
     """
+    youtube_video_id = None
+
+    # Check if lecture_id is a YouTube URL
+    if is_youtube_url(lecture_id):
+        youtube_video_id = extract_youtube_video_id(lecture_id)
+        if not youtube_video_id:
+            print(f"{Colors.RED}Error: Could not extract video ID from YouTube URL{Colors.RESET}")
+            sys.exit(1)
+
+        # Get video title to create lecture ID
+        print(f"Fetching video info from YouTube...")
+        video_title = get_youtube_video_title(youtube_video_id)
+        if video_title:
+            lecture_id = sanitize_lecture_id(video_title)
+            print(f"  Title: {video_title}")
+            print(f"  Lecture ID: {lecture_id}")
+        else:
+            lecture_id = f"YouTube_{youtube_video_id}"
+            print(f"  Could not fetch title, using: {lecture_id}")
+
     lecture_dir = PIPELINE_ROOT / lecture_id
 
     # Ensure pipeline directory exists
     lecture_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save YouTube source info for reference
+    if youtube_video_id:
+        source_info = lecture_dir / "source.json"
+        if not source_info.exists():
+            with open(source_info, 'w') as f:
+                json.dump({
+                    'type': 'youtube',
+                    'video_id': youtube_video_id,
+                    'url': f'https://www.youtube.com/watch?v={youtube_video_id}'
+                }, f, indent=2)
+
     print_header(
         "AUREA DICTA - Video Production Pipeline",
-        f"Lecture: {lecture_id}"
+        f"Lecture: {lecture_id}" + (f" (YouTube: {youtube_video_id})" if youtube_video_id else "")
     )
 
     # --- PHASE 1: Week-Level Steps ---
@@ -655,7 +860,7 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
         print_step_header(i + 1, len(WEEK_STEPS), step,
                          f"{'Transcribe lecture' if step == 'transcribe' else 'Clean transcript' if step == 'clean' else 'Segment into videos'}")
 
-        success = run_week_step(step, lecture_dir)
+        success = run_week_step(step, lecture_dir, youtube_video_id=youtube_video_id)
 
         if not success:
             print(f"\n{Colors.RED}  ✗ {step} failed{Colors.RESET}")
