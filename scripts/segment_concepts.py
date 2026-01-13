@@ -96,7 +96,7 @@ def main():
     response = client.generate(
         prompt=SEGMENTATION_PROMPT.format(content=content),
         system="You are segmenting educational content into concept videos. Output valid JSON only.",
-        max_tokens=12000,
+        max_tokens=16000,
         temperature=0.4
     )
 
