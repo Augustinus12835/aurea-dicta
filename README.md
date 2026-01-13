@@ -14,7 +14,8 @@ Aurea Dicta transforms 2-3 hour lecture recordings into 8-10 focused concept vid
 
 ## Features
 
-- **Automatic Transcription:** AssemblyAI for fast cloud transcription
+- **YouTube Support:** Process any YouTube video directly via URL (no download needed)
+- **Automatic Transcription:** YouTube captions or AssemblyAI for local videos
 - **Intelligent Segmentation:** Claude Opus 4.5 identifies logical concept breaks
 - **Script Generation:** AI writes concise, educational narration scripts
 - **Data Charts:** Matplotlib generates accurate data visualizations
@@ -43,8 +44,7 @@ aurea_dicta/
 │   ├── generate_slides_gemini.py
 │   ├── generate_tts_elevenlabs.py
 │   ├── compile_video.py
-│   ├── regenerate_frame.py
-│   └── generate_study_guide.py
+│   └── regenerate_frame.py
 ├── templates/                 # Style guides and templates
 │   ├── teaching_style_guide.md
 │   ├── slide_style_guide.md
@@ -105,14 +105,24 @@ Edit `.env` with your actual API keys:
 | `GOOGLE_CLOUD_API_KEY` | Gemini (image generation) | Yes | [aistudio.google.com](https://aistudio.google.com/apikey) |
 | `ELEVENLABS_API_KEY` | TTS voice synthesis | Yes | [elevenlabs.io](https://elevenlabs.io/) |
 | `ELEVENLABS_VOICE_ID` | Your voice ID | Yes | ElevenLabs dashboard |
-| `ASSEMBLYAI_API_KEY` | Transcription | Yes | [assemblyai.com](https://www.assemblyai.com/) |
+| `ASSEMBLYAI_API_KEY` | Transcription | Optional* | [assemblyai.com](https://www.assemblyai.com/) |
 | `FRED_API_KEY` | Economic data charts | Optional | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `ALPHA_VANTAGE_API_KEY` | Financial data | Optional | [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
 
-### 4. Add Your Lecture Video
+*AssemblyAI is only required for local video files. YouTube videos use YouTube's built-in captions.
 
+### 4. Add Your Source
+
+**Option A: YouTube URL (recommended for online content)**
+```bash
+# No download needed - just use the URL directly
+python scripts/pipeline.py run "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+**Option B: Local Video File**
 ```bash
 cp /path/to/your/lecture.mp4 inputs/MY_LECTURE.mp4
+python scripts/pipeline.py run MY_LECTURE
 ```
 
 ### 5. Run the Pipeline
@@ -121,7 +131,10 @@ cp /path/to/your/lecture.mp4 inputs/MY_LECTURE.mp4
 # Activate virtual environment
 source venv/bin/activate
 
-# Run full pipeline with interactive review checkpoints
+# From YouTube URL (auto-creates folder from video title)
+python scripts/pipeline.py run "https://www.youtube.com/watch?v=7xTGNNLPyMI"
+
+# From local video
 python scripts/pipeline.py run MY_LECTURE
 ```
 
@@ -130,7 +143,10 @@ python scripts/pipeline.py run MY_LECTURE
 ### Run Full Pipeline
 
 ```bash
-# Basic usage - processes entire lecture
+# From YouTube URL
+python scripts/pipeline.py run "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# From local video
 python scripts/pipeline.py run MY_LECTURE
 
 # Process only a specific video segment
@@ -166,12 +182,16 @@ python scripts/pipeline.py status MY_LECTURE/Video-3
 ## Pipeline Flow
 
 ```
-Lecture Video (2-3 hours)
-         │
-         ▼
+    YouTube URL                Local Video
+         │                          │
+         ▼                          ▼
+  (YouTube captions)         (AssemblyAI)
+         │                          │
+         └──────────┬───────────────┘
+                    ▼
 ┌─────────────────────────────────┐
 │ WEEK-LEVEL STEPS                │
-│ 1. Transcribe (AssemblyAI)      │
+│ 1. Transcribe (auto-detected)   │
 │ 2. Clean transcript             │
 │ 3. Segment into concepts        │
 │    >>> REVIEW CHECKPOINT        │
@@ -190,14 +210,12 @@ Lecture Video (2-3 hours)
 │ 7. Generate frame images        │
 │    >>> REVIEW CHECKPOINT        │
 │ 8. Generate TTS audio           │
+│    >>> REVIEW CHECKPOINT        │
 │ 9. Compile final video          │
-│ 10. Generate study guides       │
-│     (optional)                  │
 └─────────────────────────────────┘
          │
          ▼
    8-10 Concept Videos
-   + PDF Study Guides
 ```
 
 ### Review Checkpoints
@@ -214,6 +232,7 @@ After processing, your `pipeline/` folder will contain:
 
 ```
 pipeline/MY_LECTURE/
+├── source.json             # Source metadata (YouTube URL/video ID)
 ├── transcript.json         # Raw transcription
 ├── content_cleaned.txt     # Cleaned content
 ├── segments.json           # Segmentation data
@@ -234,9 +253,7 @@ pipeline/MY_LECTURE/
     │   ├── frame_0.mp3
     │   └── ...
     ├── final_video.mp4     # Compiled video
-    ├── subtitles.srt       # Aligned subtitles
-    ├── slides.pdf          # Frames-only PDF (optional)
-    └── study_guide.pdf     # Frames + transcript PDF (optional)
+    └── subtitles.srt       # Aligned subtitles
 ```
 
 ## Regenerating Frames
@@ -291,26 +308,7 @@ python scripts/generate_tts_elevenlabs.py pipeline/MY_LECTURE/Video-1/script.md
 
 # 9. Compile video
 python scripts/compile_video.py pipeline/MY_LECTURE/Video-1
-
-# 10. Generate study guides (optional)
-python scripts/generate_study_guide.py pipeline/MY_LECTURE/Video-1
 ```
-
-## Study Guides
-
-After video compilation, the pipeline offers to generate PDF study guides for students who prefer reading:
-
-- **slides.pdf**: All frames as a slideshow (images only)
-- **study_guide.pdf**: Frames with transcript text (landscape A4, stacked layout)
-
-The pipeline prompts "Create study guides? [y/n]" after each video completes. You can also generate them manually:
-
-```bash
-# Generate study guides for a video
-python scripts/generate_study_guide.py pipeline/MY_LECTURE/Video-1
-```
-
-Study guides use compressed images (1280px width, JPEG 80%) for reasonable file sizes (~1-2MB per video).
 
 ## Troubleshooting
 
@@ -369,11 +367,12 @@ Study guides use compressed images (1280px width, JPEG 80%) for reasonable file 
 
 | Service | Usage per 3-hour lecture | Cost |
 |---------|--------------------------|------|
-| AssemblyAI | ~3 hours | ~$0.80 |
+| AssemblyAI | ~3 hours | ~$0.80 (free with YouTube) |
 | Claude Opus 4.5 | ~70K tokens | ~$2.50 |
 | Gemini Image | ~100 images | ~$3.00 |
 | ElevenLabs TTS | ~120K characters | ~$1.00 |
-| **Total** | | **~$7.30** |
+| **Total (local video)** | | **~$7.30** |
+| **Total (YouTube)** | | **~$6.50** |
 
 ## Templates
 
