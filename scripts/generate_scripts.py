@@ -141,7 +141,8 @@ OUTPUT FORMAT:
 
 Ensure word counts match timing (seconds × 2.5).
 Reference each available data chart at least once.
-End with summary statistics showing total duration and word count.
+
+IMPORTANT: The narration should end naturally with the final teaching point. Do NOT include any meta-commentary, summary statistics, or "that's all for today" style endings in the spoken narration.
 """
 
 
