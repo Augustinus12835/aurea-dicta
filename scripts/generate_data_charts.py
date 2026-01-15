@@ -474,6 +474,8 @@ def main():
             print(f"  - {f}")
         print("\nFix the *_code.py files manually, then run: python <code_file>.py")
         print("Or delete the code file and re-run to regenerate.")
+        # Exit with error code so pipeline stops on chart failures
+        sys.exit(1)
 
     if generated > 0 or (skipped > 0 and failed == 0):
         print(f"\nNext step: python scripts/generate_scripts.py {pipeline_dir}")
