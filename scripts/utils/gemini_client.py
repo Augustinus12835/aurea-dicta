@@ -272,7 +272,7 @@ def main():
     # Test image generation
     try:
         image = client.generate_image(
-            "A simple illustration of a dice showing probability and risk",
+            "A simple illustration of a lightbulb representing ideas and learning",
             style="hand-drawn educational"
         )
         client.save_image(image, "test_output.png")

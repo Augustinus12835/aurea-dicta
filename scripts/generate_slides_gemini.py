@@ -50,10 +50,10 @@ STYLE REQUIREMENTS:
 - Hand-drawn illustration style (NOT corporate PowerPoint)
 - Clean white or cream background (#FFFEF7)
 - Color palette:
-  * Blue (#3B82F6) for risk-related concepts
-  * Orange (#F97316) for return-related concepts
-  * Green (#22C55E) for time/growth concepts
-  * Red (#EF4444) for warnings/uncertainty
+  * Blue (#3B82F6) for primary concepts and headers
+  * Orange (#F97316) for highlights and emphasis
+  * Green (#22C55E) for positive outcomes and success
+  * Red (#EF4444) for warnings and cautions
 - Typography:
   * Hand-written style headers (bold, clear)
   * Clean sans-serif body text (legible at 1080p)
@@ -372,7 +372,7 @@ REQUIREMENTS:
 - Hand-drawn, sketch-like style
 - Clear visual hierarchy
 - Legible labels and text
-- Use color coding: Blue (risk), Orange (return), Green (growth), Red (danger)
+- Use color coding: Blue (primary), Orange (highlight), Green (positive), Red (warning)
 - Simple enough to understand at a glance
 - Include arrows, connections, or flow indicators where appropriate
 """
