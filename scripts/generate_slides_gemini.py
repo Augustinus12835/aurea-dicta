@@ -49,16 +49,13 @@ STYLE_PROMPT = """Educational slide with hand-drawn, sketch-like aesthetic.
 STYLE REQUIREMENTS:
 - Hand-drawn illustration style (NOT corporate PowerPoint)
 - Clean white or cream background (#FFFEF7)
-- Color palette:
-  * Blue (#3B82F6) for primary concepts and headers
-  * Orange (#F97316) for highlights and emphasis
-  * Green (#22C55E) for positive outcomes and success
-  * Red (#EF4444) for warnings and cautions
+- Color palette: Blue (#3B82F6), Orange (#F97316), Green (#22C55E), Red (#EF4444)
 - Typography:
   * Hand-written style headers (bold, clear)
   * Clean sans-serif body text (legible at 1080p)
 - Professional but approachable
 - NO course codes, university branding, or dates
+- NO color legends or labels (do NOT label colors like "Red = danger" or "Green = opportunity")
 - Resolution: 1920x1080 (16:9)
 """
 
@@ -372,7 +369,7 @@ REQUIREMENTS:
 - Hand-drawn, sketch-like style
 - Clear visual hierarchy
 - Legible labels and text
-- Use color coding: Blue (primary), Orange (highlight), Green (positive), Red (warning)
+- Use colors from palette (Blue, Orange, Green, Red) but do NOT add color legends or labels
 - Simple enough to understand at a glance
 - Include arrows, connections, or flow indicators where appropriate
 """
