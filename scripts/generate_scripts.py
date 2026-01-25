@@ -204,7 +204,21 @@ def extract_style_key_points(_style_guide: str) -> str:
 - Define technical terms on first use (one sentence)
 - State each concept ONCE, don't repeat
 - "We" only when doing something together
-- "You" only when action required"""
+- "You" only when action required
+
+TTS PRONUNCIATION (CRITICAL for audio generation):
+- NEVER use Unicode Greek letters (π, θ, α, β, etc.) in narration text
+- Write Greek letters as English words for correct TTS pronunciation:
+  * π → "pie" (NOT "pi" which sounds like letter P)
+  * θ → "theta"
+  * α → "alpha"
+  * β → "beta"
+  * γ → "gamma"
+  * δ → "delta"
+  * σ → "sigma"
+  * ω → "omega"
+- In [Visual:] annotations, Unicode symbols are OK since they're not spoken
+- Example: "sine of pie over 4" NOT "sine of π/4" """
 
 
 def format_chart_list(specs: Dict, created_charts: List[str]) -> str:
