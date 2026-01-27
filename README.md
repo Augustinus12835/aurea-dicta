@@ -256,7 +256,28 @@ pipeline/MY_LECTURE/
     └── subtitles.srt       # Aligned subtitles
 ```
 
-## Regenerating Frames
+## Frame Generation
+
+Frame generation is resumable - it only generates missing frames by default:
+
+```bash
+# Generate frames (skips existing ones)
+python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1
+
+# Force regenerate all frames
+python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1 --force
+
+# Generate a specific frame only
+python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1 --frame 5
+
+# Continue on errors (don't stop at first failure)
+python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1 --continue-on-error
+
+# Verbose mode (see full prompts)
+python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1 --verbose
+```
+
+### Regenerating Specific Frames
 
 After reviewing generated frames, regenerate specific ones with corrections:
 
@@ -326,6 +347,18 @@ python scripts/compile_video.py pipeline/MY_LECTURE/Video-1
 1. Use `regenerate_frame.py` with detailed `--instruction`
 2. Be very specific about visual elements
 3. For technical charts (graphs, payoff diagrams), consider using matplotlib instead
+
+**Gemini frame generation fails ("No image in response")**
+- Run with `--verbose` to see detailed error info:
+  ```bash
+  python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1 --frame 5 --verbose
+  ```
+- Common causes:
+  - **Safety filters**: Content may trigger content policy (religious, medical topics)
+  - **Rate limiting**: Too many requests - wait and retry
+  - **Complex prompts**: Simplify the visual description in `visual_specs.json`
+- The error message shows `finishReason` and blocked categories for diagnosis
+- Use `--continue-on-error` to generate other frames despite failures
 
 **TTS reads visual annotations**
 - The `[Visual: ...]` annotations are automatically stripped from narration

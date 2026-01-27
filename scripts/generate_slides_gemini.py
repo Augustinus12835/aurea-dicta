@@ -566,7 +566,7 @@ def copy_and_resize_chart(chart_path: Path, output_path: Path) -> bytes:
     return output.getvalue()
 
 
-def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_frame: int = None) -> Dict:
+def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_frame: int = None, force: bool = False, fail_fast: bool = True) -> Dict:
     """
     Generate all frames for a video.
 
@@ -574,6 +574,13 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     For conceptual diagrams: generates with Gemini
 
     Output goes to frames/ folder (ready for video compilation).
+
+    Args:
+        video_dir: Path to Video-N directory
+        verbose: Show detailed output
+        specific_frame: Generate only this frame number (None = all)
+        force: Regenerate all frames even if they exist
+        fail_fast: Stop on first error (default True)
 
     Returns:
         Result dict with success/failure info
@@ -615,6 +622,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
         "success": True,
         "frames_generated": [],
         "frames_copied": [],
+        "frames_skipped": [],
         "frames_failed": [],
         "metadata": {
             "title": title,
@@ -630,6 +638,24 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
         frame_num = frame["number"]
         visual_ref = frame.get("visual_ref", "")
 
+        output_path = frames_dir / f"frame_{frame_num}.png"
+
+        # Skip if frame already exists (unless --force or regenerating specific frame)
+        if not force and specific_frame is None and output_path.exists():
+            # Still add to metadata for tracking
+            visual_spec = get_visual_spec_by_ref(visual_ref, specs)
+            frame_type = classify_frame(frame, visual_spec, chart_files)
+            results["metadata"]["frames"].append({
+                "number": frame_num,
+                "timing": frame["timing"],
+                "type": frame_type,
+                "visual_ref": visual_ref,
+                "file": f"frame_{frame_num}.png"
+            })
+            results["frames_skipped"].append(frame_num)
+            print(f"\n  Frame {frame_num}: exists, skipping")
+            continue
+
         print(f"\n  Frame {frame_num}:")
 
         # Get visual spec for this frame
@@ -641,8 +667,6 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 
         if visual_ref:
             print(f"    Visual: {visual_ref[:60]}...")
-
-        output_path = frames_dir / f"frame_{frame_num}.png"
 
         try:
             # For data charts: copy existing PNG from diagrams/
@@ -667,6 +691,8 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
                     print(f"    ERROR: Chart not found: {chart_path}")
                     results["frames_failed"].append(frame_num)
                     results["success"] = False
+                    if fail_fast:
+                        break
                     continue
 
             else:
@@ -680,6 +706,8 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
                         print(f"    ERROR: Gemini client init failed: {e}")
                         results["frames_failed"].append(frame_num)
                         results["success"] = False
+                        if fail_fast:
+                            break
                         continue
 
                 # Build prompt
@@ -697,6 +725,8 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
                     print(f"    ERROR: Failed to generate frame")
                     results["frames_failed"].append(frame_num)
                     results["success"] = False
+                    if fail_fast:
+                        break
                     continue
 
                 with open(output_path, "wb") as f:
@@ -723,6 +753,8 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
             print(f"    ERROR: {e}")
             results["frames_failed"].append(frame_num)
             results["success"] = False
+            if fail_fast:
+                break
 
     # Save metadata
     metadata_path = frames_dir / "metadata.json"
@@ -732,6 +764,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     print(f"\n  Summary:")
     print(f"    Generated (Gemini): {len(results['frames_generated'])}")
     print(f"    Copied (data charts): {len(results['frames_copied'])}")
+    print(f"    Skipped (existing): {len(results['frames_skipped'])}")
     print(f"    Failed: {len(results['frames_failed'])}")
 
     return results
@@ -740,27 +773,32 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 def main():
     """Main entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python generate_slides_gemini.py <video_dir> [--verbose] [--frame N]")
-        print("       python generate_slides_gemini.py <pipeline_dir> --all-videos [--verbose]")
+        print("Usage: python generate_slides_gemini.py <video_dir> [--verbose] [--frame N] [--force]")
+        print("       python generate_slides_gemini.py <pipeline_dir> --all-videos [--verbose] [--force]")
         print()
         print("Generates frame PNGs for video compilation.")
         print("  - Data charts: copied from diagrams/ folder")
         print("  - Conceptual diagrams: generated with Gemini")
         print()
         print("Options:")
-        print("  --all-videos  Process all Video-* directories")
-        print("  --verbose     Show detailed output")
-        print("  --frame N     Generate specific frame only (for testing)")
+        print("  --all-videos          Process all Video-* directories")
+        print("  --verbose             Show detailed output")
+        print("  --frame N             Generate specific frame only (for testing)")
+        print("  --force               Regenerate all frames (ignore existing)")
+        print("  --continue-on-error   Don't stop on first error (try all frames)")
         print()
         print("Examples:")
         print("  python generate_slides_gemini.py pipeline/YOUR_LECTURE/Video-1")
         print("  python generate_slides_gemini.py pipeline/YOUR_LECTURE/Video-1 --frame 0")
         print("  python generate_slides_gemini.py pipeline/YOUR_LECTURE --all-videos")
+        print("  python generate_slides_gemini.py pipeline/YOUR_LECTURE/Video-1 --force")
         sys.exit(1)
 
     target_path = Path(sys.argv[1])
     verbose = "--verbose" in sys.argv
     all_videos = "--all-videos" in sys.argv
+    force = "--force" in sys.argv
+    fail_fast = "--continue-on-error" not in sys.argv
 
     specific_frame = None
     if "--frame" in sys.argv:
@@ -774,6 +812,8 @@ def main():
     print(f"Target: {target_path}")
     if specific_frame is not None:
         print(f"Frame: {specific_frame} only")
+    if force:
+        print("Mode: Force regenerate all frames")
 
     if all_videos:
         # Process all Video-* directories
@@ -785,15 +825,18 @@ def main():
         all_results = {"success": [], "failed": []}
 
         for video_dir in video_dirs:
-            result = generate_frames_for_video(video_dir, verbose, specific_frame)
+            result = generate_frames_for_video(video_dir, verbose, specific_frame, force, fail_fast)
             video_name = video_dir.name
 
             if result.get("success"):
                 gen = len(result.get('frames_generated', []))
                 copied = len(result.get('frames_copied', []))
-                all_results["success"].append(f"{video_name}: {gen} generated, {copied} copied")
+                skipped = len(result.get('frames_skipped', []))
+                all_results["success"].append(f"{video_name}: {gen} generated, {copied} copied, {skipped} skipped")
             else:
                 all_results["failed"].append(f"{video_name}: {result.get('error', 'unknown error')}")
+                if fail_fast:
+                    break
 
         print("\n" + "=" * 60)
         print("ALL VIDEOS COMPLETE")
@@ -808,13 +851,14 @@ def main():
             print("\nFailed:")
             for f in all_results["failed"]:
                 print(f"  - {f}")
+            sys.exit(1)
     else:
         # Process single video
         if not target_path.is_dir():
             print(f"Error: {target_path} is not a directory")
             sys.exit(1)
 
-        result = generate_frames_for_video(target_path, verbose, specific_frame)
+        result = generate_frames_for_video(target_path, verbose, specific_frame, force, fail_fast)
 
         print("\n" + "=" * 60)
         print("FRAME GENERATION COMPLETE")
@@ -823,13 +867,18 @@ def main():
         if result.get("success"):
             gen = len(result.get('frames_generated', []))
             copied = len(result.get('frames_copied', []))
-            print(f"\nGenerated {gen} frames, copied {copied} data charts")
+            skipped = len(result.get('frames_skipped', []))
+            print(f"\nGenerated {gen} frames, copied {copied} data charts, skipped {skipped} existing")
             print(f"Output: {target_path}/frames/")
             print(f"\nNext step: python scripts/generate_tts_elevenlabs.py {target_path}/script.md")
         else:
             print(f"\nGeneration failed: {result.get('error', 'Unknown error')}")
             if result.get("frames_failed"):
                 print(f"Failed frames: {result['frames_failed']}")
+            print("\nTip: Check the error message above for details.")
+            print("     Common issues: content policy, rate limiting, or prompt complexity.")
+            print("     Try simplifying the visual description in video_brief.md or visual_specs.json")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

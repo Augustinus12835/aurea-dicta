@@ -103,7 +103,12 @@ Style requirements:
 
         # Extract image from response
         if "candidates" in result and len(result["candidates"]) > 0:
-            parts = result["candidates"][0].get("content", {}).get("parts", [])
+            candidate = result["candidates"][0]
+            parts = candidate.get("content", {}).get("parts", [])
+
+            # Check for finish reason that might explain no image
+            finish_reason = candidate.get("finishReason", "")
+
             for part in parts:
                 if "inlineData" in part:
                     image_data = part["inlineData"]["data"]
@@ -115,7 +120,35 @@ Style requirements:
                     img.save(png_buffer, format="PNG")
                     return png_buffer.getvalue()
 
-        raise Exception("No image generated in response")
+            # No image found - provide diagnostic info
+            text_parts = [p.get("text", "") for p in parts if "text" in p]
+            text_response = " ".join(text_parts)[:500] if text_parts else "(no text)"
+
+            # Check for safety ratings
+            safety_ratings = candidate.get("safetyRatings", [])
+            blocked_categories = [
+                r.get("category", "") for r in safety_ratings
+                if r.get("probability", "") in ("HIGH", "MEDIUM") or r.get("blocked", False)
+            ]
+
+            error_msg = f"No image in response. finishReason={finish_reason}"
+            if blocked_categories:
+                error_msg += f", blocked_categories={blocked_categories}"
+            if text_response and text_response != "(no text)":
+                error_msg += f", text_response={text_response[:200]}"
+
+            raise Exception(error_msg)
+
+        # No candidates at all
+        # Check for prompt feedback (content filtered before generation)
+        prompt_feedback = result.get("promptFeedback", {})
+        block_reason = prompt_feedback.get("blockReason", "")
+        safety_ratings = prompt_feedback.get("safetyRatings", [])
+
+        if block_reason:
+            raise Exception(f"Prompt blocked: {block_reason}, safety={safety_ratings}")
+
+        raise Exception(f"No candidates in response: {result}")
 
     def generate_slide(
         self,
