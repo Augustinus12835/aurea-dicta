@@ -56,12 +56,61 @@ STYLE REQUIREMENTS:
   * Red (#EF4444) for warnings or negative outcomes
 - Typography:
   * Hand-written style headers (bold, clear)
-  * Clean sans-serif body text (legible at 1080p)
+  * Minimal text - labels only, NOT sentences or paragraphs
 - Professional but approachable
 - NO course codes, university branding, or dates
-- NO color legends or keys on the slide (do NOT add text explaining what colors mean)
+- NO color legends or keys on the slide
 - Resolution: 1920x1080 (16:9)
+
+CRITICAL TEXT RULES:
+- This slide COMPLEMENTS spoken narration - the viewer will HEAR the explanation
+- DO NOT put sentences, paragraphs, or bullet points of text on the slide
+- Text should be LIMITED TO: titles, axis labels, short annotations (1-5 words max)
+- If you need to show a concept, DRAW IT, don't write about it
+- The slide should be 80% visual, 20% text (labels only)
 """
+
+# Math-specific prompt additions
+MATH_CONTENT_RULES = """
+MATH CONTENT RULES (this slide contains mathematical content):
+- Show the CALCULATION PROCESS step-by-step using mathematical notation
+- Use proper math symbols: fractions, exponents, integrals, limits, Greek letters
+- The slide should be REPRODUCIBLE - a student can follow the math just from the slide
+- Show: formulas → substitution → intermediate steps → final answer
+- Use arrows (→) or equals signs to show progression between steps
+- Box or highlight the final answer
+- Label key values and variables
+- Graphs should have labeled axes with scale/units
+- OK to have more text IF it's mathematical notation (equations, formulas, expressions)
+- Still avoid prose/sentences - use math symbols instead of words where possible
+"""
+
+
+def is_math_content(narration: str, visual_ref: str, title: str) -> bool:
+    """
+    Detect if the content is mathematical and needs step-by-step notation.
+    """
+    math_keywords = [
+        'calculus', 'derivative', 'integral', 'limit', 'function',
+        'equation', 'formula', 'solve', 'calculate', 'compute',
+        'graph', 'slope', 'tangent', 'algebra', 'polynomial',
+        'factor', 'simplify', 'evaluate', 'substitute', 'expression',
+        'x =', 'y =', 'f(x)', 'f(', 'equals', 'plus', 'minus',
+        'squared', 'cubed', 'root', 'exponent', 'logarithm',
+        'sin', 'cos', 'tan', 'theorem', 'proof', 'delta',
+        'continuous', 'discontinuous', 'asymptote', 'infinity'
+    ]
+
+    combined_text = f"{narration} {visual_ref} {title}".lower()
+
+    # Check for math keywords
+    keyword_matches = sum(1 for kw in math_keywords if kw in combined_text)
+
+    # Check for mathematical patterns
+    import re
+    has_math_notation = bool(re.search(r'[a-zA-Z]\s*[=<>≤≥]\s*\d|f\s*\(|lim|∫|Σ|π|θ|\d+/\d+', combined_text))
+
+    return keyword_matches >= 2 or has_math_notation
 
 
 def parse_script(script_path: Path) -> Tuple[str, List[Dict]]:
@@ -227,9 +276,10 @@ def classify_frame(frame: Dict, visual_spec: Optional[Dict], chart_files: List[s
 def build_conceptual_diagram_prompt(visual_spec: Optional[Dict]) -> str:
     """
     Build detailed prompt for conceptual diagram from visual_specs.json.
+    Focuses on VISUAL elements, not text.
     """
     if not visual_spec:
-        return "Generate a relevant conceptual diagram based on the narration."
+        return "Generate a simple visual diagram. Use icons and shapes, minimal text."
 
     name = visual_spec.get("name", "Diagram")
     purpose = visual_spec.get("purpose", "")
@@ -237,11 +287,10 @@ def build_conceptual_diagram_prompt(visual_spec: Optional[Dict]) -> str:
     style = visual_spec.get("style", "hand-drawn")
 
     prompt = f"""
-DIAGRAM: {name}
-PURPOSE: {purpose}
-STYLE: {style}
+DIAGRAM NAME: {name}
+VISUAL GOAL: {purpose}
 
-ELEMENTS TO INCLUDE:
+DRAW THESE VISUAL ELEMENTS (use shapes/icons, label with 1-3 words only):
 """
 
     for elem in elements:
@@ -249,50 +298,83 @@ ELEMENTS TO INCLUDE:
             elem_type = elem.get("type", "")
 
             if elem_type == "matrix":
-                prompt += f"- 2x2 Matrix with {elem.get('rows', 2)} rows and {elem.get('cols', 2)} columns\n"
+                prompt += f"- Draw a {elem.get('rows', 2)}x{elem.get('cols', 2)} grid/matrix\n"
 
             elif elem_type == "axis_label":
                 position = elem.get("position", "")
                 text = elem.get("text", "")
-                values = elem.get("values", [])
-                prompt += f"- {position.upper()} axis: '{text}' with values {values}\n"
+                prompt += f"- {position.upper()} axis labeled '{text}'\n"
 
             elif elem_type == "quadrant":
                 position = elem.get("position", "")
                 label = elem.get("label", "")
                 color = elem.get("color", "")
-                examples = elem.get("examples", [])
-                prompt += f"- {position.upper()} quadrant: '{label}' ({color})\n"
-                if examples:
-                    prompt += f"    Examples: {', '.join(str(e) for e in examples[:3])}\n"
+                prompt += f"- {position} section: label '{label}' ({color})\n"
 
             elif elem_type in ("node", "decision"):
                 label = elem.get("label", "")
                 shape = elem.get("shape", "rectangle")
-                color = elem.get("color", "")
-                prompt += f"- {elem_type.title()}: '{label}' ({shape}, {color})\n"
+                prompt += f"- Draw {shape} labeled '{label}'\n"
 
             elif elem_type == "branch":
                 label = elem.get("label", "")
-                prob = elem.get("probability", "")
-                prompt += f"- Branch: '{label}' {f'({prob})' if prob else ''}\n"
+                prompt += f"- Arrow/branch: '{label}'\n"
 
             elif elem_type == "calculation":
                 formula = elem.get("formula", "")
-                prompt += f"- Show calculation: {formula}\n"
+                prompt += f"- Show formula: {formula}\n"
 
             elif elem_type == "annotation":
                 text = elem.get("text", "")
-                prompt += f"- Annotation: '{text}'\n"
+                # Only include if it's short
+                if len(text) < 30:
+                    prompt += f"- Small label: '{text}'\n"
 
             else:
-                # Generic element
+                # Generic element - extract just the visual part
                 label = elem.get("label", elem.get("text", str(elem)))
-                prompt += f"- {label}\n"
+                if len(str(label)) < 50:  # Skip long text elements
+                    prompt += f"- {label}\n"
         else:
-            prompt += f"- {elem}\n"
+            # String elements - only include if visual/short
+            if len(str(elem)) < 50 and not any(word in str(elem).lower() for word in ['explain', 'describe', 'narration']):
+                prompt += f"- {elem}\n"
 
+    prompt += """
+REMEMBER: Labels should be 1-5 words MAX. Draw the concept, don't write about it.
+"""
     return prompt
+
+
+def extract_key_concepts(narration: str) -> str:
+    """
+    Extract key concepts from narration for visual guidance.
+    Returns a brief summary of what to visualize, not the full text.
+    """
+    # Extract key terms (words in quotes, technical terms, numbers)
+    import re
+
+    # Find quoted terms
+    quoted = re.findall(r'"([^"]+)"', narration)
+
+    # Find mathematical expressions (simple patterns)
+    math_terms = re.findall(r'[a-zA-Z]\s*(?:of\s+)?[a-zA-Z]\s*(?:equals?|=)\s*\d+', narration)
+
+    # Find numbers with context
+    numbers = re.findall(r'\b\d+(?:\.\d+)?(?:\s*(?:percent|%|dollars?|\$))?\b', narration)
+
+    # Get first sentence as topic indicator (truncated)
+    first_sentence = narration.split('.')[0][:100] if narration else ""
+
+    concepts = []
+    if first_sentence:
+        concepts.append(f"Topic: {first_sentence}")
+    if quoted:
+        concepts.append(f"Key terms: {', '.join(quoted[:3])}")
+    if numbers:
+        concepts.append(f"Key values: {', '.join(numbers[:3])}")
+
+    return "\n".join(concepts) if concepts else "General educational content"
 
 
 def build_slide_prompt(
@@ -308,21 +390,42 @@ def build_slide_prompt(
     frame_num = frame["number"]
     narration = frame["narration"]
     timing = frame["timing"]
+    visual_ref = frame.get("visual_ref", "")
 
-    # Truncate narration if too long
-    narration_preview = narration[:500] if len(narration) > 500 else narration
+    # Check if this is math content
+    is_math = is_math_content(narration, visual_ref, title)
+
+    # Extract key concepts instead of full narration
+    key_concepts = extract_key_concepts(narration)
+
+    # For math content, also extract formulas and expressions
+    if is_math:
+        import re
+        # Find formula-like patterns to include
+        formulas = re.findall(r'[a-zA-Z]+\s*\([^)]+\)\s*=\s*[^,.]+|[a-zA-Z]\s*=\s*[^,.]+|\d+\s*[+\-*/]\s*\d+', narration)
+        if formulas:
+            key_concepts += f"\nKey formulas/expressions: {'; '.join(formulas[:5])}"
+
+    # Build base prompt with optional math rules
+    math_section = MATH_CONTENT_RULES if is_math else ""
 
     base_prompt = f"""{STYLE_PROMPT}
-
+{math_section}
 VIDEO CONTEXT:
 - Topic: "{title}"
+- Content type: {"MATHEMATICAL/COMPUTATIONAL" if is_math else "CONCEPTUAL"}
 
-NARRATION FOR THIS FRAME:
-"{narration_preview}"
+KEY CONCEPTS FOR THIS FRAME:
+{key_concepts}
 
-CRITICAL: DO NOT include any frame numbers, slide numbers, timestamps,
-durations, "Frame X of Y", or any technical metadata anywhere in the
-generated image. The image should contain ONLY the visual content.
+VISUAL DESCRIPTION (from script):
+{visual_ref if visual_ref else "Create an appropriate visual for the topic"}
+
+CRITICAL RULES:
+- DO NOT include frame numbers, slide numbers, timestamps, or metadata
+- DO NOT write sentences or paragraphs - use SHORT LABELS only (1-5 words)
+- DO NOT repeat the narration as text - the viewer will HEAR it
+- FOCUS on diagrams, graphs, icons, and visual representations
 """
 
     if frame_type == "title":
@@ -331,11 +434,11 @@ SLIDE TYPE: Title Slide
 
 REQUIREMENTS:
 - Large, bold title centered or top-third
-- Subtitle or key question below (from narration)
-- Small preview element or icon related to the topic
-- Clean, professional, inviting
-- NO course codes or dates
-- Hand-drawn visual element (dice, graph sketch, question mark, etc.)
+- ONE key visual element that represents the topic (icon, simple diagram, or metaphor)
+- Minimal text: just the title (5-10 words max)
+- NO subtitle paragraphs - let the narration introduce the topic
+- Hand-drawn aesthetic
+- The visual element should hint at what's coming (curiosity hook)
 """
 
     elif frame_type == "data_chart":
@@ -347,50 +450,85 @@ SLIDE TYPE: Data Chart Integration
 
 THIS SLIDE WILL HAVE A DATA CHART OVERLAID.
 Generate a slide background/layout that:
-- Has a clear title area at top: "{chart_name}"
-- Has a large central area (60-70% of slide) that will hold the chart
-- LEAVE THE CENTRAL AREA MOSTLY EMPTY (light background, no conflicting elements)
-- Add hand-drawn callout arrows or annotation placeholders around the edges
-- Include brief explanatory text or key insight at bottom if space allows
-
-PURPOSE OF CHART: {chart_purpose}
+- Has a SHORT title at top (3-5 words): based on "{chart_name}"
+- Has a large central area (70% of slide) for the chart - LEAVE EMPTY
+- Optional: 1-2 hand-drawn annotation arrows pointing to where key insights will be
+- NO explanatory text - the narration will explain the chart
 
 The actual chart PNG will be composited onto this layout.
-Focus on the FRAME/LAYOUT only - do not draw the chart itself.
 """
 
     elif frame_type == "conceptual":
         # Build detailed diagram instructions from visual_spec
         diagram_prompt = build_conceptual_diagram_prompt(visual_spec)
 
-        return base_prompt + f"""
+        if is_math:
+            return base_prompt + f"""
+SLIDE TYPE: Mathematical Diagram/Derivation
+
+GENERATE THIS VISUAL:
+{diagram_prompt}
+
+MATH-SPECIFIC REQUIREMENTS:
+- Show the mathematical process STEP BY STEP
+- Use proper mathematical notation (fractions, exponents, symbols)
+- Include: starting formula → substitution → simplification → answer
+- Label each step or use arrows (→) to show progression
+- Box or highlight the FINAL ANSWER
+- Graphs must have labeled axes with values
+- A student should be able to reproduce the calculation from this slide alone
+- OK to have mathematical expressions - avoid prose/sentences
+"""
+        else:
+            return base_prompt + f"""
 SLIDE TYPE: Conceptual Diagram
 
-GENERATE THIS DIAGRAM:
+GENERATE THIS VISUAL:
 {diagram_prompt}
 
 REQUIREMENTS:
 - Hand-drawn, sketch-like style
-- Clear visual hierarchy
-- Legible labels and text
-- Use Blue for primary elements, Orange for highlights, Green for positive, Red for negative
-- Do NOT add a color legend or key explaining what colors mean
-- Simple enough to understand at a glance
-- Include arrows, connections, or flow indicators where appropriate
+- PRIMARILY VISUAL: diagrams, flowcharts, graphs, icons
+- Text limited to SHORT LABELS only (1-5 words per label)
+- NO sentences or explanations - the narration provides that
+- Use color to differentiate: Blue=primary, Orange=emphasis, Green=positive, Red=negative
+- Clear visual hierarchy - main concept should be obvious at a glance
+- Arrows and connections to show relationships
 """
 
     else:  # text_focused
-        return base_prompt + f"""
-SLIDE TYPE: Text-Focused Content
+        if is_math:
+            return base_prompt + f"""
+SLIDE TYPE: Mathematical Summary/Process
 
 REQUIREMENTS:
-- Extract 3-5 key points from the narration
-- Large, readable bullet points or numbered list
-- Hand-drawn icons or simple illustrations to support each point
-- NOT just a wall of text - visual interest required
-- Generous white space
-- Clear visual hierarchy
-- Use checkmarks, arrows, or hand-drawn numbering
+- Show the KEY FORMULAS or CALCULATION STEPS
+- Use mathematical notation, not prose
+- Structure as: Given → Formula → Steps → Result
+- Include important values and their meanings
+- Graphs with labeled axes if applicable
+- Box the key formula or final answer
+- A student should understand the math process from this slide
+- Avoid sentences - use symbols, equations, and short labels
+"""
+        else:
+            return base_prompt + f"""
+SLIDE TYPE: Visual Summary (NOT text-focused!)
+
+IMPORTANT: Even though this frame doesn't have a specific diagram, it should still be VISUAL.
+
+REQUIREMENTS:
+- Create a VISUAL REPRESENTATION of the concept, not bullet points
+- Options for visual approaches:
+  * Simple diagram or flowchart showing the process/concept
+  * Icons with SHORT labels (1-3 words each)
+  * Visual metaphor or analogy illustration
+  * Comparison visual (side-by-side, before/after)
+  * Timeline or sequence illustration
+- Maximum 5-10 words of text TOTAL on the entire slide
+- NO bullet points, NO sentences, NO paragraphs
+- The narration will explain everything - the slide just needs to SHOW it
+- Think: "What would a whiteboard sketch look like?"
 """
 
 
