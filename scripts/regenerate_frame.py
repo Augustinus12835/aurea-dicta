@@ -47,25 +47,8 @@ STYLE REQUIREMENTS:
 - Resolution: 1920x1080 (16:9)
 """
 
-# No-math prompt additions (for non-quantitative content)
-NO_MATH_RULES = """
-CRITICAL - NO MATHEMATICAL NOTATION:
-This video does NOT require mathematical representations. DO NOT use:
-- Mathematical formulas, equations, or expressions
-- Set notation (∈, ⊂, {}, ∪, ∩)
-- Function notation (f(x), g(x))
-- Greek letters used mathematically (Σ, π, θ as variables)
-- Proofs, derivations, or "therefore" (∴) symbols
-- Subscripts/superscripts for variables (C₁, C₂, S_T)
-- Mathematical inequalities as logical statements
-
-Instead, use:
-- Simple text labels and annotations (1-5 words)
-- Visual diagrams with arrows and connections
-- Maps, timelines, comparison tables
-- Icons and illustrations
-- Plain language descriptions
-"""
+# No-math content: we simply omit all math-related prompt text entirely.
+# By not mentioning math at all, we avoid activating math-related neural pathways.
 
 
 def load_visual_specs(video_dir: Path) -> dict:
@@ -198,20 +181,11 @@ def regenerate_frame(
         print(f"Custom instruction: {custom_instruction}")
     print()
 
-    # Build prompt with appropriate math rules
-    math_section = "" if requires_math else NO_MATH_RULES
+    # For non-math content: include NO math-related text at all
+    # This avoids activating math-related neural pathways in the model
     narration_preview = narration[:500] if len(narration) > 500 else narration
 
-    # Build final reminder for non-math content
-    no_math_reminder = """
-FINAL REMINDER - ABSOLUTELY NO MATH:
-Do NOT add any formulas, equations, calculations, Greek letters as variables,
-subscripts, or mathematical notation of any kind. This is a humanities/conceptual
-topic - use only simple text labels and visual elements.
-""" if not requires_math else ""
-
     prompt = f"""{STYLE_PROMPT}
-{math_section}
 
 VIDEO CONTEXT:
 - Topic: "{title}"
@@ -225,7 +199,7 @@ VISUAL SPECIFICATION:
 CRITICAL: DO NOT include any frame numbers, slide numbers, timestamps,
 durations, "Frame X of Y", or any technical metadata anywhere in the
 generated image. The image should contain ONLY the visual content.
-{no_math_reminder}"""
+"""
 
     # Add custom instruction if provided
     if custom_instruction:

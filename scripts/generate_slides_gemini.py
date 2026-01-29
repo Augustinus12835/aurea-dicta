@@ -85,25 +85,9 @@ MATH CONTENT RULES (this slide contains mathematical content):
 - Still avoid prose/sentences - use math symbols instead of words where possible
 """
 
-# No-math prompt additions (for non-quantitative content)
-NO_MATH_RULES = """
-CRITICAL - NO MATHEMATICAL NOTATION:
-This video does NOT require mathematical representations. DO NOT use:
-- Mathematical formulas, equations, or expressions
-- Set notation (∈, ⊂, {}, ∪, ∩)
-- Function notation (f(x), g(x))
-- Greek letters used mathematically (Σ, π, θ as variables)
-- Proofs, derivations, or "therefore" (∴) symbols
-- Subscripts/superscripts for variables (C₁, C₂, S_T)
-- Mathematical inequalities as logical statements
-
-Instead, use:
-- Simple text labels and annotations (1-5 words)
-- Visual diagrams with arrows and connections
-- Maps, timelines, comparison tables
-- Icons and illustrations
-- Plain language descriptions
-"""
+# No-math content: we simply omit all math-related prompt text entirely.
+# By not mentioning math at all, we avoid activating math-related neural pathways.
+# This is more effective than saying "no math" which paradoxically primes the model for math.
 
 
 def is_math_content(narration: str, visual_ref: str, title: str) -> bool:
@@ -444,16 +428,18 @@ def build_slide_prompt(
             key_concepts += f"\nKey formulas/expressions: {'; '.join(formulas[:5])}"
 
     # Build base prompt with appropriate math rules
-    if requires_math:
-        math_section = MATH_CONTENT_RULES if is_math else ""
+    # For non-math content: include NO math-related text at all (not even "no math" instructions)
+    # This avoids activating math-related neural pathways in the model
+    if requires_math and is_math:
+        math_section = MATH_CONTENT_RULES
     else:
-        math_section = NO_MATH_RULES  # Explicit no-math rules for non-quantitative content
+        math_section = ""  # No math text = no math activation
 
     base_prompt = f"""{STYLE_PROMPT}
 {math_section}
 VIDEO CONTEXT:
 - Topic: "{title}"
-- Content type: {"MATHEMATICAL/COMPUTATIONAL" if is_math else "CONCEPTUAL"}
+- Content type: {"QUANTITATIVE" if is_math else "CONCEPTUAL"}
 
 KEY CONCEPTS FOR THIS FRAME:
 {key_concepts}
@@ -520,14 +506,6 @@ MATH-SPECIFIC REQUIREMENTS:
 - OK to have mathematical expressions - avoid prose/sentences
 """
         else:
-            # For non-math content, add strong reminder at the end
-            no_math_reminder = """
-FINAL REMINDER - ABSOLUTELY NO MATH:
-Do NOT add any formulas, equations, calculations, Greek letters as variables,
-subscripts, or mathematical notation of any kind. This is a humanities/conceptual
-topic - use only simple text labels and visual elements.
-""" if not requires_math else ""
-
             return base_prompt + f"""
 SLIDE TYPE: Conceptual Diagram
 
@@ -542,7 +520,7 @@ REQUIREMENTS:
 - Use color to differentiate: Blue=primary, Orange=emphasis, Green=positive, Red=negative
 - Clear visual hierarchy - main concept should be obvious at a glance
 - Arrows and connections to show relationships
-{no_math_reminder}"""
+"""
 
     else:  # text_focused
         if is_math:
@@ -560,14 +538,6 @@ REQUIREMENTS:
 - Avoid sentences - use symbols, equations, and short labels
 """
         else:
-            # For non-math content, add strong reminder at the end
-            no_math_reminder = """
-FINAL REMINDER - ABSOLUTELY NO MATH:
-Do NOT add any formulas, equations, calculations, Greek letters as variables,
-subscripts, or mathematical notation of any kind. This is a humanities/conceptual
-topic - use only simple text labels and visual elements.
-""" if not requires_math else ""
-
             return base_prompt + f"""
 SLIDE TYPE: Visual Summary (NOT text-focused!)
 
@@ -585,7 +555,7 @@ REQUIREMENTS:
 - NO bullet points, NO sentences, NO paragraphs
 - The narration will explain everything - the slide just needs to SHOW it
 - Think: "What would a whiteboard sketch look like?"
-{no_math_reminder}"""
+"""
 
 
 def resize_to_1080p(image_bytes: bytes) -> bytes:
