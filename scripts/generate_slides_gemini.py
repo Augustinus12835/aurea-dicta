@@ -760,6 +760,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
         "success": True,
         "frames_generated": [],
         "frames_copied": [],
+        "frames_continued": [],  # Frames that copy previous (same visual)
         "frames_skipped": [],
         "frames_failed": [],
         "metadata": {
@@ -771,6 +772,10 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 
     # Initialize Gemini client (only if needed)
     client = None
+
+    # Track previous frame's visual spec for continuation detection
+    prev_visual_spec_id = None
+    prev_frame_num = None
 
     for frame in frames:
         frame_num = frame["number"]
@@ -798,6 +803,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 
         # Get visual spec for this frame
         visual_spec = get_visual_spec_by_ref(visual_ref, specs)
+        current_visual_spec_id = visual_spec.get("id") if visual_spec else None
 
         # Classify frame
         frame_type = classify_frame(frame, visual_spec, chart_files)
@@ -807,6 +813,37 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
             print(f"    Visual: {visual_ref[:60]}...")
 
         try:
+            # Check for continuation: same visual spec as previous frame
+            # This avoids regenerating nearly identical images and enables smooth transitions
+            if (current_visual_spec_id and
+                current_visual_spec_id == prev_visual_spec_id and
+                prev_frame_num is not None and
+                frame_type not in ("title", "data_chart")):  # Don't continue title or data chart frames
+
+                prev_frame_path = frames_dir / f"frame_{prev_frame_num}.png"
+                if prev_frame_path.exists():
+                    import shutil
+                    shutil.copy(prev_frame_path, output_path)
+                    print(f"    Continuation of frame {prev_frame_num} (same visual spec: {current_visual_spec_id})")
+                    print(f"    Copied: frame_{prev_frame_num}.png → frame_{frame_num}.png")
+
+                    results["frames_continued"].append(frame_num)
+
+                    # Add to metadata with continuation marker
+                    results["metadata"]["frames"].append({
+                        "number": frame_num,
+                        "timing": frame["timing"],
+                        "type": frame_type,
+                        "visual_ref": visual_ref,
+                        "file": f"frame_{frame_num}.png",
+                        "continuation_of": prev_frame_num,
+                        "visual_spec_id": current_visual_spec_id
+                    })
+
+                    # Update tracking for next iteration
+                    prev_visual_spec_id = current_visual_spec_id
+                    prev_frame_num = frame_num
+                    continue
             # For data charts: copy existing PNG from diagrams/
             if frame_type == "data_chart" and visual_ref and ".png" in visual_ref:
                 # Extract just the filename (e.g., "visual_7.png" from "visual_7.png - description...")
@@ -884,8 +921,13 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
                 "timing": frame["timing"],
                 "type": frame_type,
                 "visual_ref": visual_ref,
-                "file": f"frame_{frame_num}.png"
+                "file": f"frame_{frame_num}.png",
+                "visual_spec_id": current_visual_spec_id
             })
+
+            # Update tracking for continuation detection
+            prev_visual_spec_id = current_visual_spec_id
+            prev_frame_num = frame_num
 
         except Exception as e:
             print(f"    ERROR: {e}")
@@ -902,6 +944,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     print(f"\n  Summary:")
     print(f"    Generated (Gemini): {len(results['frames_generated'])}")
     print(f"    Copied (data charts): {len(results['frames_copied'])}")
+    print(f"    Continued (same visual): {len(results['frames_continued'])}")
     print(f"    Skipped (existing): {len(results['frames_skipped'])}")
     print(f"    Failed: {len(results['frames_failed'])}")
 
