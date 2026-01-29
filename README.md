@@ -258,7 +258,12 @@ pipeline/MY_LECTURE/
 
 ## Frame Generation
 
-Frame generation is resumable - it only generates missing frames by default:
+Frame generation is resumable and math-aware:
+
+- **Resumable**: Only generates missing frames by default
+- **Math-aware**: Reads `requires_math` from `visual_specs.json` to determine prompts
+  - For **quantitative content** (calculus, statistics): includes math notation rules
+  - For **humanities content** (history, literature): uses prompts with zero math-related words to prevent Gemini from adding unwanted formulas
 
 ```bash
 # Generate frames (skips existing ones)
@@ -347,6 +352,18 @@ python scripts/compile_video.py pipeline/MY_LECTURE/Video-1
 1. Use `regenerate_frame.py` with detailed `--instruction`
 2. Be very specific about visual elements
 3. For technical charts (graphs, payoff diagrams), consider using matplotlib instead
+
+**Math notation appears in humanities slides**
+- Gemini may add formulas (ΔArea, S_T, {C₁, C₂}) to non-quantitative content
+- The pipeline uses LLM-based math classification to prevent this:
+  - During brief generation, Claude sets `requires_math: true/false` in `visual_specs.json`
+  - For `requires_math: false`, prompts contain **zero math-related words**
+  - This avoids activating math-related patterns in Gemini
+- To fix: Regenerate the brief and frames:
+  ```bash
+  python scripts/generate_briefs.py pipeline/MY_LECTURE --videos N
+  python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-N --force
+  ```
 
 **Gemini frame generation fails ("No image in response")**
 - Run with `--verbose` to see detailed error info:
