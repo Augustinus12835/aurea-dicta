@@ -97,6 +97,7 @@ After the markdown brief, output a JSON block with machine-parseable visual spec
 
 ```json
 {{
+  "requires_math": false,
   "visuals": [
     {{
       "id": "visual_1",
@@ -136,6 +137,21 @@ After the markdown brief, output a JSON block with machine-parseable visual spec
   ]
 }}
 ```
+
+**requires_math field (REQUIRED):**
+- Set to `true` if this video involves:
+  - Mathematical calculations, formulas, or derivations
+  - Quantitative analysis (statistics, financial calculations)
+  - Graphs with numerical data and equations
+  - Step-by-step mathematical proofs or solutions
+- Set to `false` if this video is:
+  - Conceptual/theoretical (history, religion, philosophy, literature)
+  - Narrative/story-based content
+  - Qualitative analysis without numerical formulas
+  - Maps, timelines, comparison tables without equations
+
+Example: A finance video about "How the GFC happened" (conceptual) → requires_math: false
+Example: A finance video about "Present Value calculations" → requires_math: true
 
 IMPORTANT for visual specs:
 - Use REAL ticker symbols (^GSPC, ^VIX, AAPL) and FRED series IDs (DGS10, VIXCLS, CPIAUCSL)

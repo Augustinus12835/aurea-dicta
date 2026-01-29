@@ -47,6 +47,40 @@ STYLE REQUIREMENTS:
 - Resolution: 1920x1080 (16:9)
 """
 
+# No-math prompt additions (for non-quantitative content)
+NO_MATH_RULES = """
+CRITICAL - NO MATHEMATICAL NOTATION:
+This video does NOT require mathematical representations. DO NOT use:
+- Mathematical formulas, equations, or expressions
+- Set notation (∈, ⊂, {}, ∪, ∩)
+- Function notation (f(x), g(x))
+- Greek letters used mathematically (Σ, π, θ as variables)
+- Proofs, derivations, or "therefore" (∴) symbols
+- Subscripts/superscripts for variables (C₁, C₂, S_T)
+- Mathematical inequalities as logical statements
+
+Instead, use:
+- Simple text labels and annotations (1-5 words)
+- Visual diagrams with arrows and connections
+- Maps, timelines, comparison tables
+- Icons and illustrations
+- Plain language descriptions
+"""
+
+
+def load_visual_specs(video_dir: Path) -> dict:
+    """Load visual_specs.json."""
+    import json
+    specs_path = video_dir / "visual_specs.json"
+    if not specs_path.exists():
+        return {"visuals": [], "requires_math": False}  # Default: no math
+    with open(specs_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        # Ensure requires_math exists (backward compatibility)
+        if "requires_math" not in data:
+            data["requires_math"] = False  # Default: no math (safer)
+        return data
+
 
 def parse_script(script_path: Path) -> tuple:
     """Parse script.md to extract title and frames."""
@@ -150,19 +184,26 @@ def regenerate_frame(
     visual_ref = frame.get("visual_ref", "")
     narration = frame.get("narration", "")
 
+    # Load visual specs to get requires_math flag
+    specs = load_visual_specs(video_dir)
+    requires_math = specs.get("requires_math", False)
+
     print("=" * 60)
     print(f"Regenerating Frame {frame_number}")
     print("=" * 60)
     print(f"Video: {video_dir}")
     print(f"Visual: {visual_ref[:60]}..." if len(visual_ref) > 60 else f"Visual: {visual_ref}")
+    print(f"Requires math: {requires_math}")
     if custom_instruction:
         print(f"Custom instruction: {custom_instruction}")
     print()
 
-    # Build prompt
+    # Build prompt with appropriate math rules
+    math_section = "" if requires_math else NO_MATH_RULES
     narration_preview = narration[:500] if len(narration) > 500 else narration
 
     prompt = f"""{STYLE_PROMPT}
+{math_section}
 
 VIDEO CONTEXT:
 - Topic: "{title}"

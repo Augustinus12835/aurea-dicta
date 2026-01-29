@@ -85,6 +85,26 @@ MATH CONTENT RULES (this slide contains mathematical content):
 - Still avoid prose/sentences - use math symbols instead of words where possible
 """
 
+# No-math prompt additions (for non-quantitative content)
+NO_MATH_RULES = """
+CRITICAL - NO MATHEMATICAL NOTATION:
+This video does NOT require mathematical representations. DO NOT use:
+- Mathematical formulas, equations, or expressions
+- Set notation (∈, ⊂, {}, ∪, ∩)
+- Function notation (f(x), g(x))
+- Greek letters used mathematically (Σ, π, θ as variables)
+- Proofs, derivations, or "therefore" (∴) symbols
+- Subscripts/superscripts for variables (C₁, C₂, S_T)
+- Mathematical inequalities as logical statements
+
+Instead, use:
+- Simple text labels and annotations (1-5 words)
+- Visual diagrams with arrows and connections
+- Maps, timelines, comparison tables
+- Icons and illustrations
+- Plain language descriptions
+"""
+
 
 def is_math_content(narration: str, visual_ref: str, title: str) -> bool:
     """
@@ -199,9 +219,13 @@ def load_visual_specs(video_dir: Path) -> Dict:
     """Load visual_specs.json."""
     specs_path = video_dir / "visual_specs.json"
     if not specs_path.exists():
-        return {"visuals": []}
+        return {"visuals": [], "requires_math": False}  # Default: no math
     with open(specs_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+        # Ensure requires_math exists (backward compatibility)
+        if "requires_math" not in data:
+            data["requires_math"] = False  # Default: no math (safer)
+        return data
 
 
 def get_visual_spec_by_ref(visual_ref: str, specs: Dict) -> Optional[Dict]:
@@ -382,18 +406,31 @@ def build_slide_prompt(
     frame_type: str,
     visual_spec: Optional[Dict],
     title: str,
-    total_frames: int
+    total_frames: int,
+    requires_math: bool = False
 ) -> str:
     """
     Build Gemini prompt for slide generation.
+
+    Args:
+        frame: Frame dict with number, narration, visual_ref
+        frame_type: "title", "data_chart", "conceptual", or "text_focused"
+        visual_spec: Visual specification dict from visual_specs.json
+        title: Video title
+        total_frames: Total number of frames in video
+        requires_math: Whether this video requires mathematical notation
     """
     frame_num = frame["number"]
     narration = frame["narration"]
     timing = frame["timing"]
     visual_ref = frame.get("visual_ref", "")
 
-    # Check if this is math content
-    is_math = is_math_content(narration, visual_ref, title)
+    # Determine if this specific frame needs math content
+    # Only check for math keywords if the video allows math
+    if requires_math:
+        is_math = is_math_content(narration, visual_ref, title)
+    else:
+        is_math = False
 
     # Extract key concepts instead of full narration
     key_concepts = extract_key_concepts(narration)
@@ -406,8 +443,11 @@ def build_slide_prompt(
         if formulas:
             key_concepts += f"\nKey formulas/expressions: {'; '.join(formulas[:5])}"
 
-    # Build base prompt with optional math rules
-    math_section = MATH_CONTENT_RULES if is_math else ""
+    # Build base prompt with appropriate math rules
+    if requires_math:
+        math_section = MATH_CONTENT_RULES if is_math else ""
+    else:
+        math_section = NO_MATH_RULES  # Explicit no-math rules for non-quantitative content
 
     base_prompt = f"""{STYLE_PROMPT}
 {math_section}
@@ -739,10 +779,14 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     diagrams_dir = video_dir / "diagrams"
     chart_files = [f.name for f in diagrams_dir.glob("*.png")] if diagrams_dir.exists() else []
 
+    # Get requires_math flag from specs
+    requires_math = specs.get("requires_math", False)
+
     print(f"  Title: {title}")
     print(f"  Frames: {len(frames)}")
     print(f"  Data charts available: {len(chart_files)}")
     print(f"  Visual specs: {len(specs.get('visuals', []))}")
+    print(f"  Requires math: {requires_math}")
 
     # Filter to specific frame if requested
     if specific_frame is not None:
@@ -887,7 +931,8 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 
                 # Build prompt
                 prompt = build_slide_prompt(
-                    frame, frame_type, visual_spec, title, len(frames)
+                    frame, frame_type, visual_spec, title, len(frames),
+                    requires_math=requires_math
                 )
 
                 if verbose:
