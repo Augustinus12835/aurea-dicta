@@ -202,6 +202,14 @@ def regenerate_frame(
     math_section = "" if requires_math else NO_MATH_RULES
     narration_preview = narration[:500] if len(narration) > 500 else narration
 
+    # Build final reminder for non-math content
+    no_math_reminder = """
+FINAL REMINDER - ABSOLUTELY NO MATH:
+Do NOT add any formulas, equations, calculations, Greek letters as variables,
+subscripts, or mathematical notation of any kind. This is a humanities/conceptual
+topic - use only simple text labels and visual elements.
+""" if not requires_math else ""
+
     prompt = f"""{STYLE_PROMPT}
 {math_section}
 
@@ -217,7 +225,7 @@ VISUAL SPECIFICATION:
 CRITICAL: DO NOT include any frame numbers, slide numbers, timestamps,
 durations, "Frame X of Y", or any technical metadata anywhere in the
 generated image. The image should contain ONLY the visual content.
-"""
+{no_math_reminder}"""
 
     # Add custom instruction if provided
     if custom_instruction:
