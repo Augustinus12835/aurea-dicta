@@ -261,8 +261,8 @@ def parse_script(script_path: str) -> List[FrameData]:
         words = int(match.group(4))
         narration = match.group(5).strip()
 
-        # Remove [Visual: ...] annotations from narration
-        narration = re.sub(r'\[Visual:[^\]]*\]', '', narration)
+        # Remove [Visual: ...] annotations from narration (match to end since they always appear last)
+        narration = re.sub(r'\[Visual:.*$', '', narration, flags=re.DOTALL)
         narration = ' '.join(narration.split())  # Clean up whitespace
 
         frame = FrameData(frame_num, start_time, end_time, words, narration)

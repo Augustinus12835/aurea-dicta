@@ -49,7 +49,7 @@ JPEG_QUALITY = 80        # Good quality, small size
 
 # Colors
 HEADER_COLOR = HexColor("#1F2937")
-TEXT_COLOR = HexColor("#374151")
+TEXT_COLOR = HexColor("#000000")  # Black text
 FOOTER_COLOR = HexColor("#6B7280")
 
 
@@ -97,8 +97,8 @@ def parse_script(script_path: Path) -> tuple:
 
     for match in matches:
         frame_num, timing, word_count, text = match
-        # Remove [Visual: ...] annotations
-        clean_text = re.sub(r'\[Visual:.*?\]', '', text, flags=re.DOTALL).strip()
+        # Remove [Visual: ...] annotations (match to end since they always appear last)
+        clean_text = re.sub(r'\[Visual:.*$', '', text, flags=re.DOTALL).strip()
         # Clean up extra whitespace
         clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
         frames.append({
@@ -254,13 +254,13 @@ def create_study_guide_pdf(video_dir: Path, frames_data: list, video_title: str,
         # --- Transcript Text ---
         c.setFillColor(TEXT_COLOR)
         text_y = img_y - 15*mm
-        c.setFont("Helvetica", 11)
+        c.setFont("Helvetica", 13)  # Larger font (was 11)
 
         # Wrap text
         text_width = PAGE_WIDTH - (2 * MARGIN)
-        lines = wrap_text(transcript, c, "Helvetica", 11, text_width)
+        lines = wrap_text(transcript, c, "Helvetica", 13, text_width)
 
-        line_height = 14  # points
+        line_height = 16  # points (was 14)
         for line in lines:
             if text_y < FOOTER_HEIGHT + 10*mm:
                 break  # Don't overflow into footer

@@ -101,8 +101,8 @@ def parse_script(script_path):
 
 def clean_narration_text(text):
     """Remove markdown formatting, visual annotations, and clean narration text"""
-    # Remove [Visual: ...] annotations (entire line or inline)
-    text = re.sub(r'\[Visual:[^\]]*\]', '', text)
+    # Remove [Visual: ...] annotations (match to end since they always appear last)
+    text = re.sub(r'\[Visual:.*$', '', text, flags=re.DOTALL)
 
     # Remove markdown bold/italic
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
