@@ -68,6 +68,19 @@ CRITICAL TEXT RULES:
 - Text should be LIMITED TO: titles, axis labels, short annotations (1-5 words max)
 - If you need to show a concept, DRAW IT, don't write about it
 - The slide should be 80% visual, 20% text (labels only)
+
+LAYOUT FOR ANIMATED REVEALS (CRITICAL):
+- Design the slide as DISTINCT RECTANGULAR REGIONS that can be revealed progressively
+- Use a GRID-BASED LAYOUT with clear visual separation between sections:
+  * TOP ROW: Title/header (full width, ~10-15% height)
+  * MIDDLE SECTION: Main content in 2-3 columns or horizontal bands
+  * BOTTOM ROW: Summary/conclusion elements (if any)
+- Each visual element should fit within its own rectangular area
+- Leave GAPS (background color) between major sections - no overlapping elements
+- Timeline elements should flow LEFT-TO-RIGHT in a single horizontal band
+- Vertical flow (top-to-bottom) should have clear row boundaries
+- Avoid diagonal lines or elements that span across multiple logical sections
+- Think of the slide as a comic panel layout - each panel is self-contained
 """
 
 # Math-specific prompt additions

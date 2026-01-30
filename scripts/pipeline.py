@@ -44,7 +44,7 @@ REVIEW_CHECKPOINTS = {
 WEEK_STEPS = ["transcribe", "clean", "segment"]
 
 # Video-level steps (run per video)
-VIDEO_STEPS = ["brief", "charts", "script", "frames", "tts", "compile"]
+VIDEO_STEPS = ["brief", "charts", "script", "frames", "tts", "compile", "study_guide"]
 
 
 # =============================================================================
@@ -741,6 +741,13 @@ def run_video_step(step: str, video_dir: Path, lecture_dir: Path) -> bool:
     elif step == "compile":
         return run_script("compile_video.py", [str(video_dir)])
 
+    elif step == "study_guide":
+        # Check if frames and script exist
+        if not (video_dir / "frames").exists() or not (video_dir / "script.md").exists():
+            print(f"  {Colors.DIM}Skipping study guide (frames or script missing){Colors.RESET}")
+            return True
+        return run_script("generate_study_guide.py", [str(video_dir)])
+
     return False
 
 
@@ -964,7 +971,8 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
                  "script": "Generate narration script",
                  "frames": "Generate slide frames",
                  "tts": "Generate TTS audio",
-                 "compile": "Compile final video"}[step]
+                 "compile": "Compile final video",
+                 "study_guide": "Generate study guide PDFs"}[step]
             )
 
             success = run_video_step(step, video_dir, lecture_dir)
@@ -1094,7 +1102,8 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
              "script": "Generate narration script",
              "frames": "Generate slide frames",
              "tts": "Generate TTS audio",
-             "compile": "Compile final video"}[step]
+             "compile": "Compile final video",
+             "study_guide": "Generate study guide PDFs"}[step]
         )
 
         success = run_video_step(step, video_dir, lecture_dir)
