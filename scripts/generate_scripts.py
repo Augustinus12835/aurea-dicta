@@ -2,23 +2,30 @@
 """
 Script Generation for Aurea Dicta
 
-Generates script.md with frame-by-frame narration.
-Uses video_brief.md and references actual chart files created.
+Generates script.json (structured data) and script.md (human-readable) with
+frame-by-frame narration. Uses video_brief.md and references actual chart files.
 
 Pipeline position:
   video_brief.md + visual_specs.json + diagrams/*.png
       → generate_scripts.py
-      → script.md (frame-by-frame narration with visual references)
+      → script.json (source of truth, structured data)
+      → script.md (derived from JSON, for human review)
 """
 
 import sys
 import json
+import re
 from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.utils.claude_client import ClaudeClient
+from scripts.utils.script_parser import (
+    ScriptData, ScriptMetadata, Frame, VisualInfo,
+    parse_time_to_seconds, seconds_to_time_str,
+    script_to_markdown, script_to_json, save_script
+)
 
 
 SCRIPT_GENERATION_PROMPT = """You are writing a narration script for an educational video.
@@ -37,25 +44,7 @@ TEACHING STYLE GUIDE:
 
 ---
 
-Create a frame-by-frame narration script following this EXACT format:
-
-## Frame 0 (0:00-0:XX) • NN words
-
-[Opening narration - corresponds to title slide]
-
-[Visual: Title slide]
-
----
-
-## Frame 1 (0:XX-Y:YY) • NN words
-
-[Narration for this frame]
-
-[Visual: visual_1.png - description] OR [Visual: Conceptual diagram description]
-
----
-
-[Continue for all frames...]
+Create a frame-by-frame narration script as a JSON object.
 
 REQUIREMENTS:
 
@@ -70,8 +59,9 @@ REQUIREMENTS:
    - Last Frame = Synthesis/Closing
 
 3. **Visual References:**
-   - When a frame uses a data chart, note: [Visual: chart_id.png - brief description]
-   - When a frame needs a conceptual diagram, note: [Visual: Conceptual - description of diagram]
+   - When a frame uses a data chart, set type to "data_chart" and reference to "chart_id.png - brief description"
+   - When a frame needs a conceptual diagram, set type to "conceptual" and reference to the description
+   - Frame 0 should have type "title"
    - Match visuals to teaching flow from brief
    - Reference ALL available data charts at appropriate moments
 
@@ -96,53 +86,79 @@ REQUIREMENTS:
      * Frame A: Show one aspect/perspective of the concept
      * Frame B: Show a DIFFERENT aspect or zoom into specific detail
      * Frame C: Show practical application or real-world example
-   - Each [Visual:] description must be self-contained and distinct
-   - BAD: "[Visual: Decision Framework (continued)]"
-   - BAD: "[Visual: Matrix (continued focus on strategic implications)]"
-   - GOOD: "[Visual: Decision Framework - Risk Assessment Branch]"
-   - GOOD: "[Visual: Matrix showing Risk quadrant with hedging strategies]"
-   - GOOD: "[Visual: Matrix showing Uncertainty quadrant with buffer strategies]"
+   - Each visual reference must be self-contained and distinct
+   - BAD: "Decision Framework (continued)"
+   - GOOD: "Decision Framework - Risk Assessment Branch"
    - When reusing a concept, show a DIFFERENT visual angle or specific subset
 
-OUTPUT FORMAT:
-```markdown
-# Script: [Video Title]
+7. **Narration Content:**
+   - The "narration" field contains ONLY the spoken text
+   - Do NOT include visual annotations or descriptions in the narration
+   - The visual is specified separately in the "visual" object
+   - The narration should end naturally with the final teaching point
+   - Do NOT include any meta-commentary or "that's all for today" style endings
 
-**Total Duration:** X:XX
-**Frame Count:** N
-**Word Count:** NNN (target: N words at 2.5/sec)
-
----
-
-## Frame 0 (0:00-0:20) • 50 words
-
-[Narration text...]
-
-[Visual: Title slide with key concept preview]
-
----
-
-## Frame 1 (0:20-0:50) • 75 words
-
-[Narration text...]
-
-[Visual: visual_1.png - VIX chart showing fear spikes]
-
----
-
-## Frame 2 (0:50-1:25) • 88 words
-
-[Narration text...]
-
-[Visual: Conceptual - Long vs Short position profit diagrams]
-
----
-```
+OUTPUT FORMAT (respond with ONLY the JSON, no markdown code blocks):
+{{
+  "title": "Video Title Here",
+  "metadata": {{
+    "total_duration": "X:XX",
+    "frame_count": N,
+    "word_count": NNN,
+    "target_wps": 2.5
+  }},
+  "frames": [
+    {{
+      "number": 0,
+      "timing": {{
+        "start": "0:00",
+        "end": "0:20",
+        "start_seconds": 0,
+        "end_seconds": 20
+      }},
+      "word_count": 50,
+      "narration": "Opening narration text here. This is ONLY the spoken text, no visual descriptions.",
+      "visual": {{
+        "type": "title",
+        "reference": "Title slide with key concept preview"
+      }}
+    }},
+    {{
+      "number": 1,
+      "timing": {{
+        "start": "0:20",
+        "end": "0:50",
+        "start_seconds": 20,
+        "end_seconds": 50
+      }},
+      "word_count": 75,
+      "narration": "First teaching point narration here...",
+      "visual": {{
+        "type": "data_chart",
+        "reference": "visual_1.png - VIX chart showing fear spikes"
+      }}
+    }},
+    {{
+      "number": 2,
+      "timing": {{
+        "start": "0:50",
+        "end": "1:25",
+        "start_seconds": 50,
+        "end_seconds": 85
+      }},
+      "word_count": 88,
+      "narration": "Second teaching point narration here...",
+      "visual": {{
+        "type": "conceptual",
+        "reference": "Long vs Short position profit diagrams"
+      }}
+    }}
+  ]
+}}
 
 Ensure word counts match timing (seconds × 2.5).
 Reference each available data chart at least once.
-
-IMPORTANT: The narration should end naturally with the final teaching point. Do NOT include any meta-commentary, summary statistics, or "that's all for today" style endings in the spoken narration.
+Output ONLY valid JSON, no markdown formatting or code blocks.
 """
 
 
@@ -291,8 +307,8 @@ def generate_script(
     chart_list: str,
     conceptual_list: str,
     style_guide: str
-) -> str:
-    """Generate script using Claude."""
+) -> Dict:
+    """Generate script using Claude, returns parsed JSON dict."""
 
     prompt = SCRIPT_GENERATION_PROMPT.format(
         video_brief=video_brief,
@@ -303,29 +319,98 @@ def generate_script(
 
     response = client.generate(
         prompt=prompt,
-        system="You are an expert educational script writer. Create clear, engaging narration that follows the teaching flow precisely. Match visuals to content. Be concise - no filler words.",
-        max_tokens=6000,
+        system="You are an expert educational script writer. Create clear, engaging narration that follows the teaching flow precisely. Match visuals to content. Be concise - no filler words. Output ONLY valid JSON.",
+        max_tokens=8000,
         temperature=0.5
     )
 
-    return response
+    # Parse JSON response
+    return parse_script_response(response)
 
 
-def count_script_stats(script: str) -> Dict:
-    """Count frames, words, and estimate duration."""
-    import re
+def parse_script_response(response: str) -> Dict:
+    """Parse Claude's JSON response into a dict."""
+    # Clean up response - remove any markdown code blocks if present
+    cleaned = response.strip()
 
-    frame_count = len(re.findall(r"## Frame \d+", script))
-    word_count = len(script.split())
+    # Remove markdown code block markers if present
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
 
-    # Try to extract duration from script header
-    duration_match = re.search(r"\*\*Total Duration:\*\*\s*(\d+:\d+)", script)
-    duration = duration_match.group(1) if duration_match else f"~{word_count // 150}:00"
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
 
+    cleaned = cleaned.strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        # Try to find JSON in the response
+        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"Failed to parse JSON response: {e}\nResponse: {cleaned[:500]}...")
+
+
+def json_to_script_data(json_data: Dict) -> ScriptData:
+    """Convert parsed JSON dict to ScriptData object."""
+    meta = json_data.get("metadata", {})
+    total_duration_str = meta.get("total_duration", "0:00")
+
+    metadata = ScriptMetadata(
+        total_duration=total_duration_str,
+        total_duration_seconds=parse_time_to_seconds(total_duration_str),
+        frame_count=meta.get("frame_count", 0),
+        word_count=meta.get("word_count", 0),
+        target_wps=meta.get("target_wps", 2.5)
+    )
+
+    frames = []
+    for frame_data in json_data.get("frames", []):
+        timing = frame_data.get("timing", {})
+
+        # Get timing values
+        if "start_seconds" in timing:
+            start_sec = timing["start_seconds"]
+            end_sec = timing["end_seconds"]
+        else:
+            start_sec = parse_time_to_seconds(timing.get("start", "0:00"))
+            end_sec = parse_time_to_seconds(timing.get("end", "0:00"))
+
+        visual_data = frame_data.get("visual", {})
+        visual = VisualInfo(
+            type=visual_data.get("type", "conceptual"),
+            reference=visual_data.get("reference", "")
+        )
+
+        frame = Frame(
+            number=frame_data.get("number", 0),
+            start_seconds=float(start_sec),
+            end_seconds=float(end_sec),
+            word_count=frame_data.get("word_count", 0),
+            narration=frame_data.get("narration", ""),
+            visual=visual
+        )
+        frames.append(frame)
+
+    return ScriptData(
+        title=json_data.get("title", "Untitled"),
+        metadata=metadata,
+        frames=frames
+    )
+
+
+def count_script_stats(script_data: ScriptData) -> Dict:
+    """Count frames, words, and get duration from ScriptData."""
     return {
-        "frames": frame_count,
-        "words": word_count,
-        "duration": duration
+        "frames": len(script_data.frames),
+        "words": script_data.metadata.word_count,
+        "duration": script_data.metadata.total_duration
     }
 
 
@@ -420,23 +505,23 @@ def main():
         # Generate script
         print(f"  Generating script...")
         try:
-            script = generate_script(client, video_brief, chart_list, conceptual_list, style_guide)
+            script_json = generate_script(client, video_brief, chart_list, conceptual_list, style_guide)
+            script_data = json_to_script_data(script_json)
         except Exception as e:
             print(f"  Error generating script: {e}")
             results["failed"].append(video_name)
             continue
 
-        # Save script
-        script_path = video_dir / "script.md"
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(script)
+        # Save both JSON (source of truth) and MD (for human review)
+        save_script(script_data, video_dir, write_json=True, write_md=True)
 
         # Count stats
-        stats = count_script_stats(script)
+        stats = count_script_stats(script_data)
 
-        print(f"  Saved: {script_path}")
+        print(f"  Saved: script.json (source of truth)")
+        print(f"  Saved: script.md (for review)")
         print(f"    Frames: {stats['frames']}")
-        print(f"    Words: ~{stats['words']}")
+        print(f"    Words: {stats['words']}")
         print(f"    Duration: {stats['duration']}")
 
         results["success"].append(video_name)

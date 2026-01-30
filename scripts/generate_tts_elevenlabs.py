@@ -7,14 +7,18 @@ Configure VOICE_ID below with your preferred voice (default or cloned).
 
 import os
 import sys
-import re
 import json
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from dotenv import load_dotenv
 from mutagen.mp3 import MP3
 from elevenlabs.client import ElevenLabs
+
+# Add parent to path for utils
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.utils.script_parser import load_script, Frame as ScriptFrame
 
 # Load environment variables from project .env file
 # Try multiple locations: project root, parent directory
@@ -38,85 +42,41 @@ OUTPUT_FORMAT = "mp3_44100_128"  # 44.1kHz, 128kbps
 # Initialize ElevenLabs client
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
-class Frame:
-    """Represents a single frame with narration"""
-    def __init__(self, number, start_time, end_time, word_count, text):
+class TTSFrame:
+    """Represents a single frame with narration for TTS generation"""
+    def __init__(self, number: int, start_seconds: float, end_seconds: float, word_count: int, text: str):
         self.number = number
-        self.start_time = start_time
-        self.end_time = end_time
+        self.start_seconds = start_seconds
+        self.end_seconds = end_seconds
         self.word_count = word_count
         self.text = text
-        self.duration = self.calculate_duration()
-
-    def calculate_duration(self):
-        """Calculate target duration in seconds from time range"""
-        start_parts = self.start_time.split(':')
-        end_parts = self.end_time.split(':')
-
-        start_seconds = int(start_parts[0]) * 60 + int(start_parts[1])
-        end_seconds = int(end_parts[0]) * 60 + int(end_parts[1])
-
-        return end_seconds - start_seconds
+        self.duration = end_seconds - start_seconds
 
     def __repr__(self):
-        return f"Frame {self.number}: {self.duration}s, {self.word_count} words"
+        return f"Frame {self.number}: {self.duration:.0f}s, {self.word_count} words"
 
 
-def parse_script(script_path):
+def parse_script(script_path: str) -> List[TTSFrame]:
     """
-    Parse script.md file to extract frame information
+    Parse script file (JSON or MD) to extract frame information.
 
-    Expected format:
-    ## Frame X (MM:SS-MM:SS) • NN words
-
-    [narration text]
+    Uses the shared script_parser utility for consistent parsing.
     """
+    script_dir = Path(script_path).parent
+    script_data = load_script(script_dir)
+
     frames = []
-
-    if not os.path.exists(script_path):
-        raise FileNotFoundError(f"Script file not found: {script_path}")
-
-    with open(script_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # Pattern to match frame headers
-    # ## Frame 0 (0:00-0:15) • 38 words
-    pattern = r'## Frame (\d+) \((\d+:\d+)-(\d+:\d+)\) • (\d+) words\n\n(.*?)(?=\n## |\Z)'
-
-    matches = re.finditer(pattern, content, re.DOTALL)
-
-    for match in matches:
-        frame_num = int(match.group(1))
-        start_time = match.group(2)
-        end_time = match.group(3)
-        word_count = int(match.group(4))
-        text = match.group(5).strip()
-
-        # Clean the text - remove markdown formatting
-        text = clean_narration_text(text)
-
-        frame = Frame(frame_num, start_time, end_time, word_count, text)
-        frames.append(frame)
+    for frame in script_data.frames:
+        tts_frame = TTSFrame(
+            number=frame.number,
+            start_seconds=frame.start_seconds,
+            end_seconds=frame.end_seconds,
+            word_count=frame.word_count,
+            text=frame.narration  # Already clean - no visual annotations in JSON
+        )
+        frames.append(tts_frame)
 
     return frames
-
-
-def clean_narration_text(text):
-    """Remove markdown formatting, visual annotations, and clean narration text"""
-    # Remove [Visual: ...] annotations (match to end since they always appear last)
-    text = re.sub(r'\[Visual:.*$', '', text, flags=re.DOTALL)
-
-    # Remove markdown bold/italic
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-
-    # Remove markdown links [text](url)
-    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-
-    # Remove excess whitespace
-    text = ' '.join(text.split())
-
-    return text
 
 
 def load_math_verification(script_dir: str) -> Optional[Dict]:
@@ -136,7 +96,7 @@ def get_natural_narration(frame_num: int, original_text: str, math_data: Optiona
     Get the best narration text for a frame.
 
     Prefers natural_narration from math_verification.json if available,
-    otherwise falls back to the original text (cleaned).
+    otherwise falls back to the original text.
     """
     if math_data:
         frame_key = str(frame_num)
@@ -147,6 +107,22 @@ def get_natural_narration(frame_num: int, original_text: str, math_data: Optiona
                 return natural
 
     return original_text
+
+
+def clean_narration_text(text: str) -> str:
+    """Clean narration text - remove any markdown formatting."""
+    import re
+    # Remove markdown bold/italic
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+
+    # Remove markdown links [text](url)
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+
+    # Remove excess whitespace
+    text = ' '.join(text.split())
+
+    return text
 
 
 def call_elevenlabs_api(text):
@@ -186,7 +162,7 @@ def get_audio_duration(file_path):
         return None
 
 
-def generate_audio_for_frames(frames, output_dir, math_data: Optional[Dict] = None):
+def generate_audio_for_frames(frames: List[TTSFrame], output_dir: str, math_data: Optional[Dict] = None):
     """
     Generate audio files for all frames
 
@@ -216,8 +192,10 @@ def generate_audio_for_frames(frames, output_dir, math_data: Optional[Dict] = No
             frame.text = narration_text
 
         print(f"\nProcessing Frame {frame.number}...")
-        print(f"  Target duration: {frame.duration}s")
+        print(f"  Target duration: {frame.duration:.0f}s")
         print(f"  Word count: {frame.word_count}")
+        # Clean the text before display and TTS
+        frame.text = clean_narration_text(frame.text)
         print(f"  Text preview: {frame.text[:60]}...")
 
         try:

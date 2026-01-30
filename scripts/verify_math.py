@@ -2,13 +2,13 @@
 """
 Math Verification Script
 
-Verifies mathematical calculations in script.md using Claude extended thinking.
+Verifies mathematical calculations in script using Claude extended thinking.
 Generates:
 1. Natural English narration for TTS (no symbols)
 2. Precise math notation for Gemini slides
 
 Pipeline position:
-    script.md → verify_math.py → math_verification.json
+    script.json → verify_math.py → math_verification.json
 
 Usage:
     python verify_math.py pipeline/YOUR_LECTURE/Video-N
@@ -17,9 +17,7 @@ Usage:
     python verify_math.py pipeline/YOUR_LECTURE/Video-N --force
 """
 
-import os
 import sys
-import re
 import json
 import argparse
 from pathlib import Path
@@ -29,6 +27,7 @@ from typing import List, Dict, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.utils.claude_client import ClaudeClient
+from scripts.utils.script_parser import load_script
 
 # Keywords that indicate a frame needs math verification
 MATH_KEYWORDS = [
@@ -66,70 +65,28 @@ MATH_PATTERNS = [
 ]
 
 
-def parse_script(script_path: Path) -> Tuple[str, List[Dict]]:
+def parse_script_from_dir(video_dir: Path) -> Tuple[str, List[Dict]]:
     """
-    Parse script.md to extract frame information.
+    Parse script file (JSON or MD) to extract frame information.
+
+    Uses the shared script_parser utility for consistent parsing.
 
     Returns:
         (title, frames_list)
     """
-    with open(script_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    script_data = load_script(video_dir)
 
-    # Extract title
-    title_match = re.search(r"# Script: (.+)", content)
-    title = title_match.group(1).strip() if title_match else "Untitled"
-
-    # Parse frames
     frames = []
-    frame_pattern = r"## Frame (\d+) \(([^)]+)\)(?: • (\d+) words?)?"
-    sections = re.split(r"(?=## Frame \d+)", content)
-
-    for section in sections:
-        if not section.strip() or not section.strip().startswith("## Frame"):
-            continue
-
-        header_match = re.search(frame_pattern, section)
-        if not header_match:
-            continue
-
-        frame_num = int(header_match.group(1))
-        timing = header_match.group(2)
-        word_count = int(header_match.group(3)) if header_match.group(3) else 0
-
-        # Extract visual reference
-        visual_match = re.search(r"\[Visual: ([^\]]+)\]", section)
-        visual_ref = visual_match.group(1).strip() if visual_match else ""
-
-        # Extract narration
-        lines = section.split("\n")
-        narration_lines = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("## Frame"):
-                continue
-            if line.startswith("[Visual:"):
-                continue
-            if line.startswith("---"):
-                continue
-            narration_lines.append(line)
-
-        narration = " ".join(narration_lines).strip()
-
-        if not word_count:
-            word_count = len(narration.split())
-
+    for frame in script_data.frames:
         frames.append({
-            "number": frame_num,
-            "timing": timing,
-            "word_count": word_count,
-            "narration": narration,
-            "visual_ref": visual_ref
+            "number": frame.number,
+            "timing": frame.timing_str,
+            "word_count": frame.word_count,
+            "narration": frame.narration,
+            "visual_ref": frame.visual.reference if frame.visual else ""
         })
 
-    return title, frames
+    return script_data.title, frames
 
 
 def load_visual_specs(video_dir: Path) -> Dict:
@@ -238,10 +195,11 @@ def run_verification(
         with open(output_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    # Load inputs
-    script_path = video_dir / "script.md"
-    if not script_path.exists():
-        return {"success": False, "error": "No script.md found"}
+    # Load inputs - check for script.json or script.md
+    json_path = video_dir / "script.json"
+    md_path = video_dir / "script.md"
+    if not json_path.exists() and not md_path.exists():
+        return {"success": False, "error": "No script.json or script.md found"}
 
     specs = load_visual_specs(video_dir)
     requires_math = specs.get("requires_math", True)
@@ -250,7 +208,7 @@ def run_verification(
         print(f"  Skipping: requires_math=false in visual_specs.json")
         return {"success": True, "skipped": True, "reason": "requires_math=false"}
 
-    title, frames = parse_script(script_path)
+    title, frames = parse_script_from_dir(video_dir)
 
     print(f"  Title: {title}")
     print(f"  Total frames: {len(frames)}")

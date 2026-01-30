@@ -15,12 +15,16 @@ Note: Subtitles are generated separately using generate_subtitles.py
 
 import os
 import sys
-import re
 import json
 import subprocess
 from datetime import datetime
 from typing import List, Dict, Tuple
 from pathlib import Path
+
+# Add parent to path for utils
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.utils.script_parser import load_script
 
 
 class VideoCompilationError(Exception):
@@ -235,35 +239,25 @@ def parse_time_to_seconds(time_str: str) -> float:
     return minutes * 60 + seconds
 
 
-def parse_script(script_path: str) -> List[FrameData]:
+def parse_script_from_dir(video_folder: str) -> List[FrameData]:
     """
-    Parse script.md to extract frame timing and narration
+    Parse script file (JSON or MD) to extract frame timing and narration.
 
-    Returns list of FrameData objects
+    Uses the shared script_parser utility for consistent parsing.
+    Returns list of FrameData objects.
     """
+    script_data = load_script(Path(video_folder))
+
     frames = []
-
-    with open(script_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # Pattern: ## Frame N (MM:SS-MM:SS) • NN words
-    pattern = r'## Frame (\d+) \((\d+:\d+)-(\d+:\d+)\) • (\d+) words?\s*\n\n(.*?)(?=\n---|\n##|\Z)'
-
-    matches = re.finditer(pattern, content, re.DOTALL)
-
-    for match in matches:
-        frame_num = int(match.group(1))
-        start_time = parse_time_to_seconds(match.group(2))
-        end_time = parse_time_to_seconds(match.group(3))
-        words = int(match.group(4))
-        narration = match.group(5).strip()
-
-        # Remove [Visual: ...] annotations from narration (match to end since they always appear last)
-        narration = re.sub(r'\[Visual:.*$', '', narration, flags=re.DOTALL)
-        narration = ' '.join(narration.split())  # Clean up whitespace
-
-        frame = FrameData(frame_num, start_time, end_time, words, narration)
-        frames.append(frame)
+    for frame in script_data.frames:
+        frame_data = FrameData(
+            number=frame.number,
+            start_time=frame.start_seconds,
+            end_time=frame.end_seconds,
+            words=frame.word_count,
+            narration=frame.narration  # Already clean - no visual annotations in JSON
+        )
+        frames.append(frame_data)
 
     return frames
 
@@ -736,12 +730,14 @@ def compile_video(video_folder: str) -> str:
 
     try:
         # Step 1: Parse script first to get frame count
-        print("[1/6] Parsing script.md...")
-        script_path = os.path.join(video_folder, 'script.md')
-        if not os.path.exists(script_path):
-            raise VideoCompilationError(f"Script not found: {script_path}")
+        print("[1/6] Parsing script...")
+        # Check for script.json or script.md
+        json_path = os.path.join(video_folder, 'script.json')
+        md_path = os.path.join(video_folder, 'script.md')
+        if not os.path.exists(json_path) and not os.path.exists(md_path):
+            raise VideoCompilationError(f"Script not found: {json_path} or {md_path}")
 
-        frames = parse_script(script_path)
+        frames = parse_script_from_dir(video_folder)
         print(f"      Parsed {len(frames)} frames")
         print(f"      Script duration: {frames[-1].end_time:.0f} seconds")
 

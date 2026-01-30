@@ -17,15 +17,18 @@ Output:
 
 import os
 import sys
-import re
 import json
 import argparse
-from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 import whisper
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Add parent to path for utils
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.utils.script_parser import load_script
 
 
 class FrameData:
@@ -46,41 +49,24 @@ class FrameData:
         self.aligned_words = None
 
 
-def parse_time_to_seconds(time_str: str) -> float:
-    """Convert MM:SS time format to seconds"""
-    parts = time_str.split(':')
-    if len(parts) != 2:
-        raise ValueError(f"Invalid time format: {time_str}")
-    minutes = int(parts[0])
-    seconds = int(parts[1])
-    return minutes * 60 + seconds
+def parse_script_from_dir(video_folder: str) -> List[FrameData]:
+    """
+    Parse script file (JSON or MD) to extract frame timing and narration.
 
+    Uses the shared script_parser utility for consistent parsing.
+    """
+    script_data = load_script(Path(video_folder))
 
-def parse_script(script_path: str) -> List[FrameData]:
-    """Parse script.md to extract frame timing and narration"""
     frames = []
-
-    with open(script_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    # Pattern: ## Frame N (MM:SS-MM:SS) * NN words
-    pattern = r'## Frame (\d+) \((\d+:\d+)-(\d+:\d+)\) • (\d+) words?\s*\n\n(.*?)(?=\n---|\n##|\Z)'
-
-    matches = re.finditer(pattern, content, re.DOTALL)
-
-    for match in matches:
-        frame_num = int(match.group(1))
-        start_time = parse_time_to_seconds(match.group(2))
-        end_time = parse_time_to_seconds(match.group(3))
-        words = int(match.group(4))
-        narration = match.group(5).strip()
-
-        # Remove [Visual: ...] annotations from narration
-        narration = re.sub(r'\[Visual:.*$', '', narration, flags=re.DOTALL)
-        narration = ' '.join(narration.split())
-
-        frame = FrameData(frame_num, start_time, end_time, words, narration)
-        frames.append(frame)
+    for frame in script_data.frames:
+        frame_data = FrameData(
+            number=frame.number,
+            start_time=frame.start_seconds,
+            end_time=frame.end_seconds,
+            words=frame.word_count,
+            narration=frame.narration  # Already clean - no visual annotations in JSON
+        )
+        frames.append(frame_data)
 
     return frames
 
@@ -323,11 +309,12 @@ def generate_subtitles_for_video(video_folder: str, force: bool = False) -> Tupl
         return True, f"{video_name}: Skipped (subtitles.srt exists)"
 
     # Check required files
-    script_path = os.path.join(video_folder, 'script.md')
+    json_path = os.path.join(video_folder, 'script.json')
+    md_path = os.path.join(video_folder, 'script.md')
     audio_dir = os.path.join(video_folder, 'audio')
 
-    if not os.path.exists(script_path):
-        return False, f"{video_name}: Missing script.md"
+    if not os.path.exists(json_path) and not os.path.exists(md_path):
+        return False, f"{video_name}: Missing script.json or script.md"
 
     if not os.path.exists(audio_dir):
         return False, f"{video_name}: Missing audio/ directory"
@@ -338,8 +325,8 @@ def generate_subtitles_for_video(video_folder: str, force: bool = False) -> Tupl
 
     try:
         # Parse script
-        print("\n[1/4] Parsing script.md...")
-        frames = parse_script(script_path)
+        print("\n[1/4] Parsing script...")
+        frames = parse_script_from_dir(video_folder)
         print(f"      Found {len(frames)} frames")
 
         # Load math verification for natural narration

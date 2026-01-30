@@ -14,16 +14,17 @@ Examples:
 """
 
 import sys
-import re
+import json
 import argparse
 from pathlib import Path
+import io
 
 # Add parent to path for utils
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.utils.gemini_client import GeminiClient
+from scripts.utils.script_parser import load_script
 from PIL import Image
-import io
 
 # Configuration
 OUTPUT_SIZE = (1920, 1080)
@@ -65,54 +66,24 @@ def load_visual_specs(video_dir: Path) -> dict:
         return data
 
 
-def parse_script(script_path: Path) -> tuple:
-    """Parse script.md to extract title and frames."""
-    with open(script_path, "r", encoding="utf-8") as f:
-        content = f.read()
+def parse_script_from_dir(video_dir: Path) -> tuple:
+    """
+    Parse script file (JSON or MD) to extract title and frames.
 
-    # Extract title
-    title_match = re.search(r"# Script: (.+)", content)
-    title = title_match.group(1).strip() if title_match else "Untitled"
+    Uses the shared script_parser utility for consistent parsing.
+    """
+    script_data = load_script(video_dir)
 
-    # Parse frames
     frames = []
-    frame_pattern = r"## Frame (\d+) \(([^)]+)\)(?: • (\d+) words?)?"
-    sections = re.split(r"(?=## Frame \d+)", content)
-
-    for section in sections:
-        if not section.strip() or not section.strip().startswith("## Frame"):
-            continue
-
-        header_match = re.search(frame_pattern, section)
-        if not header_match:
-            continue
-
-        frame_num = int(header_match.group(1))
-        timing = header_match.group(2)
-
-        # Extract visual reference
-        visual_match = re.search(r"\[Visual: ([^\]]+)\]", section)
-        visual_ref = visual_match.group(1).strip() if visual_match else None
-
-        # Extract narration
-        lines = section.split("\n")
-        narration_lines = []
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith("## Frame") or line.startswith("[Visual:") or line.startswith("---"):
-                continue
-            narration_lines.append(line)
-
-        narration = " ".join(narration_lines).strip()
-
+    for frame in script_data.frames:
         frames.append({
-            "number": frame_num,
-            "timing": timing,
-            "narration": narration,
-            "visual_ref": visual_ref
+            "number": frame.number,
+            "timing": frame.timing_str,
+            "narration": frame.narration,
+            "visual_ref": frame.visual.reference if frame.visual else None
         })
 
-    return title, frames
+    return script_data.title, frames
 
 
 def resize_to_1080p(image_bytes: bytes) -> bytes:
@@ -143,15 +114,17 @@ def regenerate_frame(
     Returns:
         True if successful
     """
-    script_path = video_dir / "script.md"
     frames_dir = video_dir / "frames"
 
-    if not script_path.exists():
-        print(f"Error: script.md not found in {video_dir}")
+    # Check for script.json or script.md
+    json_path = video_dir / "script.json"
+    md_path = video_dir / "script.md"
+    if not json_path.exists() and not md_path.exists():
+        print(f"Error: No script.json or script.md found in {video_dir}")
         return False
 
     # Parse script
-    title, frames = parse_script(script_path)
+    title, frames = parse_script_from_dir(video_dir)
 
     # Find the specific frame
     frame = None

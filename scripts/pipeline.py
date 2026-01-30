@@ -403,7 +403,8 @@ def detect_video_state(video_dir: Path) -> VideoState:
     state.content_exists = (video_dir / "content.txt").exists()
     state.brief_exists = (video_dir / "video_brief.md").exists()
     state.visual_specs_exists = (video_dir / "visual_specs.json").exists()
-    state.script_exists = (video_dir / "script.md").exists()
+    # Check for script.json (preferred) or script.md (legacy)
+    state.script_exists = (video_dir / "script.json").exists() or (video_dir / "script.md").exists()
     state.math_verification_exists = (video_dir / "math_verification.json").exists()
 
     # Check final video (with size validation)
@@ -483,11 +484,31 @@ def check_requires_math(specs_path: Path) -> bool:
 
 
 def count_frames_in_script(script_path: Path) -> int:
-    """Count frames defined in script.md."""
-    content = script_path.read_text()
-    # Match "## Frame N" headers
-    matches = re.findall(r'^## Frame (\d+)', content, re.MULTILINE)
-    return len(matches)
+    """
+    Count frames defined in script file.
+
+    Supports both script.json and script.md formats.
+    """
+    video_dir = script_path.parent
+
+    # Try JSON first
+    json_path = video_dir / "script.json"
+    if json_path.exists():
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return len(data.get("frames", []))
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Fall back to MD parsing
+    if script_path.exists():
+        content = script_path.read_text()
+        # Match "## Frame N" headers
+        matches = re.findall(r'^## Frame (\d+)', content, re.MULTILINE)
+        return len(matches)
+
+    return 0
 
 
 def extract_video_title(brief_path: Path) -> str:

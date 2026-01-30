@@ -6,9 +6,9 @@ Generates slide PNGs directly from script + visual specs.
 Fully automated slide generation.
 
 Pipeline position:
-  script.md + visual_specs.json + diagrams/*.png
+  script.json + visual_specs.json + diagrams/*.png
       → generate_slides_gemini.py
-      → slides/*.png (ready for video compilation)
+      → frames/*.png (ready for video compilation)
 
 For data charts: Composites pre-generated charts onto slide backgrounds.
 For conceptual diagrams: Generates from visual_specs.json specifications.
@@ -20,16 +20,16 @@ Usage:
 
 import os
 import sys
-import re
 import json
 import time
 import io
-import base64
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 # Add parent to path for utils
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.utils.script_parser import load_script, ScriptData
 
 # Import PIL for image compositing
 try:
@@ -130,9 +130,11 @@ def is_math_content(narration: str, visual_ref: str, title: str) -> bool:
     return keyword_matches >= 2 or has_math_notation
 
 
-def parse_script(script_path: Path) -> Tuple[str, List[Dict]]:
+def parse_script_from_dir(video_dir: Path) -> Tuple[str, List[Dict]]:
     """
-    Parse script.md to extract frame information.
+    Parse script file (JSON or MD) to extract frame information.
+
+    Uses the shared script_parser utility for consistent parsing.
 
     Returns:
         (title, frames_list)
@@ -149,67 +151,19 @@ def parse_script(script_path: Path) -> Tuple[str, List[Dict]]:
         ...
     ]
     """
-    with open(script_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    script_data = load_script(video_dir)
 
-    # Extract title
-    title_match = re.search(r"# Script: (.+)", content)
-    title = title_match.group(1).strip() if title_match else "Untitled"
-
-    # Parse frames - match: ## Frame N (timing) • X words
     frames = []
-
-    # Split by frame headers
-    frame_pattern = r"## Frame (\d+) \(([^)]+)\)(?: • (\d+) words?)?"
-    sections = re.split(r"(?=## Frame \d+)", content)
-
-    for section in sections:
-        if not section.strip() or not section.strip().startswith("## Frame"):
-            continue
-
-        # Extract header info
-        header_match = re.search(frame_pattern, section)
-        if not header_match:
-            continue
-
-        frame_num = int(header_match.group(1))
-        timing = header_match.group(2)
-        word_count = int(header_match.group(3)) if header_match.group(3) else 0
-
-        # Extract visual reference
-        visual_match = re.search(r"\[Visual: ([^\]]+)\]", section)
-        visual_ref = visual_match.group(1).strip() if visual_match else None
-
-        # Extract narration (text between header and [Visual:])
-        # Remove header line and visual line
-        lines = section.split("\n")
-        narration_lines = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("## Frame"):
-                continue
-            if line.startswith("[Visual:"):
-                continue
-            if line.startswith("---"):
-                continue
-            narration_lines.append(line)
-
-        narration = " ".join(narration_lines).strip()
-
-        if not word_count:
-            word_count = len(narration.split())
-
+    for frame in script_data.frames:
         frames.append({
-            "number": frame_num,
-            "timing": timing,
-            "word_count": word_count,
-            "narration": narration,
-            "visual_ref": visual_ref
+            "number": frame.number,
+            "timing": frame.timing_str,
+            "word_count": frame.word_count,
+            "narration": frame.narration,
+            "visual_ref": frame.visual.reference if frame.visual else None
         })
 
-    return title, frames
+    return script_data.title, frames
 
 
 def load_visual_specs(video_dir: Path) -> Dict:
@@ -832,11 +786,12 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     print(f"{'='*60}")
 
     # Load inputs
-    script_path = video_dir / "script.md"
-    if not script_path.exists():
-        return {"success": False, "error": "No script.md found"}
+    json_path = video_dir / "script.json"
+    md_path = video_dir / "script.md"
+    if not json_path.exists() and not md_path.exists():
+        return {"success": False, "error": "No script.json or script.md found"}
 
-    title, frames = parse_script(script_path)
+    title, frames = parse_script_from_dir(video_dir)
     specs = load_visual_specs(video_dir)
     math_data = load_math_verification(video_dir)
 

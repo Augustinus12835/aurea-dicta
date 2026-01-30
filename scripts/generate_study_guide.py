@@ -6,6 +6,9 @@ Generates PDF study guides from video frames and scripts:
 1. slides.pdf - All frames as a slideshow (frames only)
 2. study_guide.pdf - Frames + transcript text for reading
 
+For math videos (requires_math=true), uses natural_narration from
+math_verification.json for TTS-friendly text.
+
 Usage:
     python generate_study_guide.py <video_dir>
     python generate_study_guide.py pipeline/BANK5016_Week1/Video-1
@@ -16,10 +19,16 @@ Output:
 """
 
 import sys
-import re
+import json
 import io
 import tempfile
 from pathlib import Path
+from typing import Dict, Optional, List
+
+# Add parent to path for utils
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from scripts.utils.script_parser import load_script
 
 try:
     from reportlab.lib.pagesizes import landscape, A4
@@ -76,39 +85,87 @@ def compress_image(image_path: Path, temp_dir: Path) -> Path:
         return compressed_path
 
 
-def parse_script(script_path: Path) -> tuple:
+def load_visual_specs(video_dir: Path) -> Dict:
+    """Load visual_specs.json."""
+    specs_path = video_dir / "visual_specs.json"
+    if not specs_path.exists():
+        return {"visuals": [], "requires_math": False}
+    try:
+        with open(specs_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if "requires_math" not in data:
+                data["requires_math"] = False
+            return data
+    except (json.JSONDecodeError, IOError):
+        return {"visuals": [], "requires_math": False}
+
+
+def load_math_verification(video_dir: Path) -> Optional[Dict]:
+    """Load math_verification.json if it exists."""
+    verification_path = video_dir / "math_verification.json"
+    if not verification_path.exists():
+        return None
+    try:
+        with open(verification_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def get_natural_narration(frame_num: int, original_text: str, math_data: Optional[Dict]) -> str:
     """
-    Parse script.md into list of frames with timing and text.
+    Get the best narration text for a frame.
+
+    Prefers natural_narration from math_verification.json if available,
+    otherwise falls back to the original text.
+    """
+    if math_data:
+        frame_key = str(frame_num)
+        frame_data = math_data.get("frames", {}).get(frame_key)
+        if frame_data:
+            natural = frame_data.get("natural_narration")
+            if natural and frame_data.get("verification_status") in ("correct", "corrected"):
+                return natural
+
+    return original_text
+
+
+def parse_script_from_dir(video_dir: Path) -> tuple:
+    """
+    Parse script file (JSON or MD) into list of frames with timing and text.
+
+    Uses the shared script_parser utility for consistent parsing.
+    For math videos, uses natural_narration from math_verification.json.
 
     Returns:
         (video_title, list of frame dicts)
     """
-    content = script_path.read_text()
+    script_data = load_script(video_dir)
+
+    # Check if this is a math video
+    specs = load_visual_specs(video_dir)
+    requires_math = specs.get("requires_math", False)
+
+    # Load math verification if this is a math video
+    math_data = None
+    if requires_math:
+        math_data = load_math_verification(video_dir)
+
     frames = []
+    for frame in script_data.frames:
+        # For math videos, use natural_narration from math_verification.json
+        transcript = frame.narration
+        if requires_math and math_data:
+            transcript = get_natural_narration(frame.number, transcript, math_data)
 
-    # Extract video title
-    title_match = re.search(r'^# Script: (.+)$', content, re.MULTILINE)
-    video_title = title_match.group(1) if title_match else "Video"
-
-    # Match frame headers and content
-    # Format: ## Frame N (timing) • X words
-    pattern = r'## Frame (\d+) \(([^)]+)\) [•·] (\d+) words\n\n(.*?)(?=\n## Frame|\n---|\Z)'
-    matches = re.findall(pattern, content, re.DOTALL)
-
-    for match in matches:
-        frame_num, timing, word_count, text = match
-        # Remove [Visual: ...] annotations (match to end since they always appear last)
-        clean_text = re.sub(r'\[Visual:.*$', '', text, flags=re.DOTALL).strip()
-        # Clean up extra whitespace
-        clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
         frames.append({
-            'number': int(frame_num),
-            'timing': timing,
-            'words': int(word_count),
-            'transcript': clean_text
+            'number': frame.number,
+            'timing': frame.timing_str,
+            'words': frame.word_count,
+            'transcript': transcript
         })
 
-    return video_title, frames
+    return script_data.title, frames
 
 
 def wrap_text(text: str, canvas_obj, font: str, size: float, max_width: float) -> list:
@@ -290,17 +347,18 @@ def generate_study_guides(video_dir: Path) -> tuple:
     """
     video_dir = Path(video_dir)
     frames_dir = video_dir / "frames"
-    script_path = video_dir / "script.md"
 
-    # Validate inputs
-    if not script_path.exists():
-        raise FileNotFoundError(f"Script not found: {script_path}")
+    # Check for script.json or script.md
+    json_path = video_dir / "script.json"
+    md_path = video_dir / "script.md"
+    if not json_path.exists() and not md_path.exists():
+        raise FileNotFoundError(f"Script not found: {json_path} or {md_path}")
 
     if not frames_dir.exists():
         raise FileNotFoundError(f"Frames directory not found: {frames_dir}")
 
-    # Parse script
-    video_title, frames_data = parse_script(script_path)
+    # Parse script (uses natural_narration for math videos)
+    video_title, frames_data = parse_script_from_dir(video_dir)
 
     if not frames_data:
         raise ValueError("No frames found in script.md")
