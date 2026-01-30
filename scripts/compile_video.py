@@ -963,100 +963,11 @@ def generate_report(video_folder: str, frames: List[FrameData],
     return '\n'.join(report_lines)
 
 
-def extract_pdf_to_frames(video_folder: str, num_expected_frames: int) -> bool:
-    """
-    Extract slides.pdf to PNG frames using pdftocairo
-
-    Args:
-        video_folder: Path to video folder
-        num_expected_frames: Expected number of frames from script.md
-
-    Returns:
-        True if extraction successful, False if slides.pdf doesn't exist
-
-    Raises:
-        VideoCompilationError: If PDF page count doesn't match expected frames
-    """
-    pdf_path = os.path.join(video_folder, 'slides.pdf')
-    frames_dir = os.path.join(video_folder, 'frames')
-
-    # Check if slides.pdf exists
-    if not os.path.exists(pdf_path):
-        return False
-
-    print("      ✓ Found slides.pdf, extracting frames...")
-
-    # Get PDF page count
-    try:
-        result = subprocess.run(
-            ['pdfinfo', pdf_path],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        # Extract page count
-        for line in result.stdout.split('\n'):
-            if line.startswith('Pages:'):
-                pdf_pages = int(line.split(':')[1].strip())
-                break
-        else:
-            raise VideoCompilationError("Could not determine PDF page count")
-
-        # Verify page count matches expected frames
-        if pdf_pages != num_expected_frames:
-            raise VideoCompilationError(
-                f"PDF has {pdf_pages} pages but script expects {num_expected_frames} frames"
-            )
-
-        print(f"      ✓ PDF has {pdf_pages} pages (matches script)")
-
-    except subprocess.CalledProcessError as e:
-        raise VideoCompilationError(f"Failed to read PDF info: {e}")
-    except FileNotFoundError:
-        raise VideoCompilationError("pdfinfo not found - install poppler-utils: brew install poppler")
-
-    # Create frames directory if it doesn't exist
-    os.makedirs(frames_dir, exist_ok=True)
-
-    # Extract PDF to PNG frames (150 DPI for ~1920x1080 output)
-    try:
-        subprocess.run(
-            ['pdftocairo', '-png', '-r', '150', pdf_path, os.path.join(frames_dir, 'frame')],
-            check=True,
-            capture_output=True
-        )
-        print(f"      ✓ Extracted PDF to PNG frames (150 DPI)")
-
-    except subprocess.CalledProcessError as e:
-        raise VideoCompilationError(f"Failed to extract PDF: {e}")
-    except FileNotFoundError:
-        raise VideoCompilationError("pdftocairo not found - install poppler-utils: brew install poppler")
-
-    # Rename frames from frame-01.png to frame_0.png (0-indexed)
-    import glob
-    extracted_frames = sorted(glob.glob(os.path.join(frames_dir, 'frame-*.png')))
-
-    if len(extracted_frames) != pdf_pages:
-        raise VideoCompilationError(
-            f"Expected {pdf_pages} extracted frames, found {len(extracted_frames)}"
-        )
-
-    for i, old_path in enumerate(extracted_frames):
-        new_path = os.path.join(frames_dir, f'frame_{i}.png')
-        os.rename(old_path, new_path)
-
-    print(f"      ✓ Renamed frames to 0-indexed convention (frame_0.png - frame_{num_expected_frames-1}.png)")
-
-    return True
-
-
 def compile_video(video_folder: str) -> str:
     """
     Main compilation function
 
     Workflow:
-    0. Extract slides.pdf to frames if it exists (automated)
     1. Uses actual measured audio durations (not script estimates)
     2. Frames and audio start/end simultaneously (no delays)
     3. Whisper provides precise word-level timestamps
@@ -1085,13 +996,6 @@ def compile_video(video_folder: str) -> str:
         frames = parse_script(script_path)
         print(f"      ✓ Parsed {len(frames)} frames")
         print(f"      ✓ Script duration: {frames[-1].end_time:.0f} seconds")
-
-        # Step 0.5: Extract PDF to frames if slides.pdf exists
-        print("\n[0.5/9] Checking for slides.pdf...")
-        if extract_pdf_to_frames(video_folder, len(frames)):
-            pass  # PDF extracted successfully
-        else:
-            print("      ✓ No slides.pdf found, using existing frames")
 
         # Step 1: Validate input files and measure audio durations
         print("\n[1/9] Validating input files and calculating actual frame times...")
