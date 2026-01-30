@@ -5,6 +5,7 @@ Wrapper for Anthropic Claude Opus 4.5 API calls
 """
 
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -293,6 +294,132 @@ OUTPUT FORMAT (JSON):
 Respond with ONLY valid JSON."""
 
         return self.generate(prompt, system=system, temperature=0.3)
+
+
+    def verify_math(
+        self,
+        narration: str,
+        visual_context: str,
+        frame_number: int = 0,
+        budget_tokens: int = 10000
+    ) -> dict:
+        """
+        Verify mathematical content using extended thinking.
+
+        Uses Claude's extended thinking capability to carefully work through
+        mathematical calculations, then returns:
+        - natural_narration: TTS-friendly version of the content
+        - math_steps: Precise mathematical notation for Gemini slides
+        - verification_status: "correct", "corrected", or "unclear"
+
+        Args:
+            narration: The original narration text with math content
+            visual_context: Description of what the visual should show
+            frame_number: Frame number for context
+            budget_tokens: Extended thinking budget (default 10000)
+
+        Returns:
+            dict with natural_narration, math_steps, verification_status, etc.
+        """
+        system = """You are a mathematics verification expert. Your task is to:
+1. Verify that any mathematical calculations in the narration are correct
+2. Generate a natural English narration suitable for text-to-speech (no symbols like √, ∫, etc.)
+3. Generate precise mathematical steps for educational slides
+
+You must respond with ONLY valid JSON, no other text."""
+
+        prompt = f"""Analyze this educational math content and verify its accuracy.
+
+FRAME NUMBER: {frame_number}
+
+ORIGINAL NARRATION:
+{narration}
+
+VISUAL CONTEXT:
+{visual_context}
+
+TASK:
+1. Work through any mathematical calculations step-by-step to verify correctness
+2. Create a natural English narration that:
+   - Reads well for text-to-speech (spell out symbols: "square root of x" not "√x")
+   - Uses natural phrases like "two plus two" instead of "2 + 2"
+   - Maintains the teaching flow and meaning
+   - Can be longer than the original if needed for clear step-by-step explanation (this is math-intensive content)
+
+3. Create precise math steps that:
+   - Show the complete mathematical process
+   - Use proper LaTeX-style notation
+   - Include intermediate steps
+   - Highlight the final answer
+
+RESPOND WITH THIS EXACT JSON FORMAT:
+{{
+    "verification_status": "correct" or "corrected" or "unclear",
+    "issues_found": ["list of any errors found, empty if none"],
+    "natural_narration": "The TTS-friendly narration text...",
+    "math_steps": [
+        {{
+            "step": 1,
+            "expression": "LaTeX expression",
+            "operation": "What operation is being done",
+            "note": "Optional note about this step"
+        }}
+    ],
+    "final_answer": "The final numerical or symbolic answer",
+    "confidence": "high" or "medium" or "low"
+}}
+
+Important:
+- If no math is present, set verification_status to "unclear" and return the original narration
+- The natural_narration can be longer than the original for thorough explanation
+- Math steps should be thorough enough for a student to follow along"""
+
+        try:
+            # Use extended thinking for thorough verification
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=16000,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": budget_tokens
+                },
+                messages=[{"role": "user", "content": prompt}],
+                system=system
+            )
+
+            # Extract the text response (extended thinking puts result in content blocks)
+            result_text = ""
+            for block in response.content:
+                if hasattr(block, 'text'):
+                    result_text = block.text
+                    break
+
+            # Parse JSON from response
+            # Try to find JSON in the response
+            try:
+                result = json.loads(result_text)
+            except json.JSONDecodeError:
+                # Try to extract JSON from the text
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', result_text)
+                if json_match:
+                    result = json.loads(json_match.group())
+                else:
+                    raise ValueError(f"Could not parse JSON from response: {result_text[:500]}")
+
+            return result
+
+        except Exception as e:
+            # Return a safe fallback that preserves the original
+            return {
+                "verification_status": "error",
+                "issues_found": [str(e)],
+                "natural_narration": narration,
+                "math_steps": [],
+                "final_answer": None,
+                "confidence": "low",
+                "error": str(e)
+            }
 
 
 def main():

@@ -225,6 +225,64 @@ def load_visual_specs(video_dir: Path) -> Dict:
         return data
 
 
+def load_math_verification(video_dir: Path) -> Optional[Dict]:
+    """Load math_verification.json if it exists."""
+    verification_path = video_dir / "math_verification.json"
+    if not verification_path.exists():
+        return None
+    try:
+        with open(verification_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def get_verified_math_steps(frame_num: int, math_data: Optional[Dict]) -> Optional[str]:
+    """
+    Get formatted math steps from verification data for a frame.
+
+    Returns formatted string to inject into Gemini prompt, or None if not available.
+    """
+    if not math_data:
+        return None
+
+    frame_key = str(frame_num)
+    frame_data = math_data.get("frames", {}).get(frame_key)
+
+    if not frame_data:
+        return None
+
+    if frame_data.get("verification_status") not in ("correct", "corrected"):
+        return None
+
+    math_steps = frame_data.get("math_steps", [])
+    if not math_steps:
+        return None
+
+    # Format math steps for Gemini prompt
+    lines = ["VERIFIED MATHEMATICAL STEPS (reproduce these exactly):"]
+    for step in math_steps:
+        step_num = step.get("step", "?")
+        expr = step.get("expression", "")
+        operation = step.get("operation", "")
+        note = step.get("note", "")
+
+        step_line = f"Step {step_num}: {expr}"
+        if operation:
+            step_line += f" ({operation})"
+        if note:
+            step_line += f" [{note}]"
+        lines.append(step_line)
+
+    final_answer = frame_data.get("final_answer")
+    if final_answer:
+        lines.append(f"\nFINAL ANSWER: {final_answer}")
+
+    lines.append("\nCRITICAL: Show these exact steps. Do not skip, combine, or modify them.")
+
+    return "\n".join(lines)
+
+
 def get_visual_spec_by_ref(visual_ref: str, specs: Dict) -> Optional[Dict]:
     """Find visual spec matching a reference."""
     if not visual_ref:
@@ -404,7 +462,8 @@ def build_slide_prompt(
     visual_spec: Optional[Dict],
     title: str,
     total_frames: int,
-    requires_math: bool = False
+    requires_math: bool = False,
+    verified_math_steps: Optional[str] = None
 ) -> str:
     """
     Build Gemini prompt for slide generation.
@@ -416,6 +475,7 @@ def build_slide_prompt(
         title: Video title
         total_frames: Total number of frames in video
         requires_math: Whether this video requires mathematical notation
+        verified_math_steps: Pre-verified math steps from math_verification.json
     """
     frame_num = frame["number"]
     narration = frame["narration"]
@@ -448,6 +508,11 @@ def build_slide_prompt(
     else:
         math_section = ""  # No math text = no math activation
 
+    # Build verified math section if available
+    verified_section = ""
+    if verified_math_steps:
+        verified_section = f"\n{verified_math_steps}\n"
+
     base_prompt = f"""{STYLE_PROMPT}
 {math_section}
 VIDEO CONTEXT:
@@ -456,7 +521,7 @@ VIDEO CONTEXT:
 
 KEY CONCEPTS FOR THIS FRAME:
 {key_concepts}
-
+{verified_section}
 VISUAL DESCRIPTION (from script):
 {visual_ref if visual_ref else "Create an appropriate visual for the topic"}
 
@@ -773,6 +838,7 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
 
     title, frames = parse_script(script_path)
     specs = load_visual_specs(video_dir)
+    math_data = load_math_verification(video_dir)
 
     # Get available chart files
     diagrams_dir = video_dir / "diagrams"
@@ -786,6 +852,9 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
     print(f"  Data charts available: {len(chart_files)}")
     print(f"  Visual specs: {len(specs.get('visuals', []))}")
     print(f"  Requires math: {requires_math}")
+    if math_data:
+        verified_frames = len(math_data.get("frames", {}))
+        print(f"  Math verification: {verified_frames} frames verified")
 
     # Filter to specific frame if requested
     if specific_frame is not None:
@@ -928,10 +997,16 @@ def generate_frames_for_video(video_dir: Path, verbose: bool = False, specific_f
                             break
                         continue
 
+                # Get verified math steps if available
+                verified_steps = get_verified_math_steps(frame_num, math_data)
+                if verified_steps and verbose:
+                    print(f"    Using verified math steps from math_verification.json")
+
                 # Build prompt
                 prompt = build_slide_prompt(
                     frame, frame_type, visual_spec, title, len(frames),
-                    requires_math=requires_math
+                    requires_math=requires_math,
+                    verified_math_steps=verified_steps
                 )
 
                 if verbose:

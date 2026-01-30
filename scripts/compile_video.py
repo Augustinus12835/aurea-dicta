@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 Video Compilation Script for Aurea Dicta
-Compiles final video with transitions and subtitles
+Compiles final video from frames and audio.
 
 Usage:
     python3 compile_video.py pipeline/YOUR_LECTURE/Video-1
 
 Output:
-    - final_video.mp4 (complete video, subtitles NOT burned-in)
-    - subtitles.srt (separate subtitle file - viewers can toggle on/off)
+    - final_video.mp4 (complete video)
     - compilation_report.txt (verification report)
+
+Note: Subtitles are generated separately using generate_subtitles.py
 """
 
 import os
@@ -20,9 +21,6 @@ import subprocess
 from datetime import datetime
 from typing import List, Dict, Tuple
 from pathlib import Path
-import whisper
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 class VideoCompilationError(Exception):
@@ -60,7 +58,6 @@ class FrameData:
         self.actual_audio_duration = None  # Measured from audio file
         self.actual_start_time = None  # Actual video timestamp (calculated)
         self.actual_end_time = None    # Actual video timestamp (calculated)
-        self.whisper_segments = None  # Word-level timestamps from Whisper
         self.continuation_of = None  # If this frame continues a previous frame's visual
 
 
@@ -283,247 +280,6 @@ def get_audio_duration_ffprobe(audio_path: str) -> float:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return float(result.stdout.strip())
-
-
-def transcribe_audio_with_whisper(audio_path: str, frame_start_time: float,
-                                  model_name: str = "small") -> Dict:
-    """
-    Transcribe audio file using Whisper to get word-level timestamps
-
-    Args:
-        audio_path: Path to audio file
-        frame_start_time: Start time of this frame in the final video
-        model_name: Whisper model to use (tiny, base, small, medium, large)
-
-    Returns:
-        Dictionary with segments containing word-level timestamps
-    """
-    print(f"      Transcribing {os.path.basename(audio_path)} with Whisper...")
-
-    # Load model (cached after first use)
-    model = whisper.load_model(model_name)
-
-    # Transcribe with word-level timestamps
-    result = model.transcribe(
-        audio_path,
-        word_timestamps=True,
-        language="en"
-    )
-
-    # Adjust timestamps to be relative to video start
-    for segment in result.get('segments', []):
-        segment['start'] += frame_start_time
-        segment['end'] += frame_start_time
-
-        if 'words' in segment:
-            for word in segment['words']:
-                word['start'] += frame_start_time
-                word['end'] += frame_start_time
-
-    return result
-
-
-def align_script_to_whisper_timestamps(script_text: str, whisper_result: Dict) -> List[Dict]:
-    """
-    Align actual script text with Whisper word timestamps
-
-    This corrects Whisper transcription errors (e.g., "Cain" -> "Keynes")
-    while preserving precise timing information.
-
-    Args:
-        script_text: Ground truth text from script.md
-        whisper_result: Whisper transcription with timestamps
-
-    Returns:
-        List of word dictionaries with corrected text and preserved timestamps
-    """
-    # Extract all Whisper words with timestamps
-    whisper_words = []
-    for segment in whisper_result.get('segments', []):
-        if 'words' in segment:
-            whisper_words.extend(segment['words'])
-
-    # Clean and tokenize script text
-    script_words = script_text.replace('\n', ' ').split()
-
-    # Align script words to Whisper timestamps
-    # Simple approach: assume same word count, map 1:1
-    aligned_words = []
-
-    # If counts match, direct mapping
-    if len(script_words) == len(whisper_words):
-        for script_word, whisper_word in zip(script_words, whisper_words):
-            aligned_words.append({
-                'word': script_word,  # Use actual script text
-                'start': whisper_word['start'],  # Use Whisper timing
-                'end': whisper_word['end']
-            })
-    else:
-        # Counts don't match - use proportional mapping
-        # This handles cases where Whisper merges/splits words
-        total_duration = whisper_words[-1]['end'] - whisper_words[0]['start']
-        time_per_word = total_duration / len(script_words)
-
-        current_time = whisper_words[0]['start']
-        for script_word in script_words:
-            aligned_words.append({
-                'word': script_word,
-                'start': current_time,
-                'end': current_time + time_per_word
-            })
-            current_time += time_per_word
-
-    return aligned_words
-
-
-def convert_to_srt_timestamp(seconds: float) -> str:
-    """
-    Convert seconds to SRT timestamp format: HH:MM:SS,mmm
-
-    Example: 65.5 -> 00:01:05,500
-    """
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds % 1) * 1000)
-
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-
-
-def split_text_for_subtitles(text: str, max_chars_per_line: int = 42,
-                             max_lines: int = 2) -> List[str]:
-    """
-    Split text into subtitle-friendly segments
-
-    Rules:
-    - Max 42 characters per line
-    - Max 2 lines per subtitle
-    - Split at sentence/phrase boundaries when possible
-    """
-    segments = []
-    words = text.split()
-
-    current_lines = []
-    current_line = []
-    current_length = 0
-
-    for word in words:
-        word_length = len(word)
-
-        # Check if adding this word exceeds line length
-        if current_length + word_length + (1 if current_line else 0) > max_chars_per_line:
-            # Save current line and start new one
-            if current_line:
-                current_lines.append(' '.join(current_line))
-                current_line = [word]
-                current_length = word_length
-            else:
-                # Word is too long, add it anyway
-                current_lines.append(word)
-                current_line = []
-                current_length = 0
-
-            # Check if we've reached max lines
-            if len(current_lines) >= max_lines:
-                segments.append('\n'.join(current_lines))
-                current_lines = []
-        else:
-            current_line.append(word)
-            current_length += word_length + (1 if len(current_line) > 1 else 0)
-
-    # Add remaining words
-    if current_line:
-        current_lines.append(' '.join(current_line))
-    if current_lines:
-        segments.append('\n'.join(current_lines))
-
-    return segments
-
-
-def generate_subtitles_from_corrected_timestamps(frames: List[FrameData], output_path: str,
-                                                max_chars_per_line: int = 42) -> int:
-    """
-    Generate SRT subtitle file using corrected script text with Whisper timestamps
-
-    Uses actual script text (corrected) with Whisper timing (precise).
-
-    Args:
-        frames: List of FrameData objects with aligned words
-        output_path: Path to save SRT file
-        max_chars_per_line: Maximum characters per subtitle line
-
-    Returns number of subtitle entries created
-    """
-    subtitle_entries = []
-    entry_id = 1
-
-    for frame in frames:
-        if not hasattr(frame, 'aligned_words') or not frame.aligned_words:
-            continue
-
-        # Group words into subtitle chunks (max 2 lines, max chars per line)
-        words = frame.aligned_words
-        current_chunk = []
-        current_line = []
-        current_length = 0
-        chunk_start_time = None
-
-        for word_info in words:
-            word = word_info['word'].strip()
-            if not word:
-                continue
-
-            if chunk_start_time is None:
-                chunk_start_time = word_info['start']
-
-            word_length = len(word)
-
-            # Check if adding this word exceeds line length
-            if current_length + word_length + (1 if current_line else 0) > max_chars_per_line:
-                # Start new line
-                if current_line:
-                    current_chunk.append(' '.join(current_line))
-                    current_line = [word]
-                    current_length = word_length
-                else:
-                    # Word too long, add anyway
-                    current_chunk.append(word)
-                    current_line = []
-                    current_length = 0
-
-                # Check if we've filled 2 lines (create subtitle entry)
-                if len(current_chunk) >= 2:
-                    text = '\n'.join(current_chunk)
-                    start_ts = convert_to_srt_timestamp(chunk_start_time)
-                    end_ts = convert_to_srt_timestamp(word_info['end'])
-                    subtitle_entries.append(f"{entry_id}\n{start_ts} --> {end_ts}\n{text}\n")
-                    entry_id += 1
-
-                    current_chunk = []
-                    chunk_start_time = None
-                    if current_line:
-                        # Continue with overflow word
-                        chunk_start_time = word_info['start']
-            else:
-                current_line.append(word)
-                current_length += word_length + (1 if len(current_line) > 1 else 0)
-
-        # Add remaining words as final subtitle entry
-        if current_line:
-            current_chunk.append(' '.join(current_line))
-
-        if current_chunk and chunk_start_time is not None:
-            text = '\n'.join(current_chunk)
-            start_ts = convert_to_srt_timestamp(chunk_start_time)
-            end_ts = convert_to_srt_timestamp(words[-1]['end'])
-            subtitle_entries.append(f"{entry_id}\n{start_ts} --> {end_ts}\n{text}\n")
-            entry_id += 1
-
-    # Write SRT file
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(subtitle_entries))
-
-    return len(subtitle_entries)
 
 
 def calculate_actual_frame_times(frames: List[FrameData]) -> None:
@@ -876,8 +632,7 @@ def verify_compilation(video_folder: str, frames: List[FrameData]) -> Dict:
 
 
 def generate_report(video_folder: str, frames: List[FrameData],
-                   num_subtitles: int, verification: Dict,
-                   compilation_time: float) -> str:
+                   verification: Dict, compilation_time: float) -> str:
     """
     Generate comprehensive compilation report
     """
@@ -890,72 +645,63 @@ def generate_report(video_folder: str, frames: List[FrameData],
         "",
         "INPUT VERIFICATION",
         "-" * 70,
-        f"✓ Script parsed: {len(frames)} frames",
-        f"✓ Images found: {len(frames)} PNG files (1920x1080)",
-        f"✓ Audio found: {len(frames)} MP3 files",
-        f"✓ Total expected duration: {frames[-1].end_time:.0f} seconds",
-        "",
-        "SUBTITLE GENERATION",
-        "-" * 70,
-        f"✓ Subtitles created: {num_subtitles} subtitle entries",
-        f"✓ Format: SRT with Whisper word-level timestamps",
-        f"✓ Max line length: 42 characters",
-        f"✓ Max lines per subtitle: 2",
-        f"✓ Timing: Perfectly synced using Whisper STT",
+        f"Script parsed: {len(frames)} frames",
+        f"Images found: {len(frames)} PNG files (1920x1080)",
+        f"Audio found: {len(frames)} MP3 files",
+        f"Total expected duration: {frames[-1].end_time:.0f} seconds",
         "",
         "VIDEO COMPILATION",
         "-" * 70,
-        f"✓ Frame transitions: Crossfade (0.5s)",
-        f"✓ Audio timing: No artificial delay (Whisper-synced)",
-        f"✓ Frame duration: Extended to prevent audio cutoff",
-        f"✓ Video codec: H.264 (libx264, CRF 23)",
-        f"✓ Audio codec: AAC (192 kbps)",
-        f"✓ Resolution: 1920x1080 @ 30fps",
-        f"✓ Subtitles: Separate .srt file (students can toggle on/off)",
+        f"Frame transitions: Crossfade (0.5s)",
+        f"Audio timing: Synchronized with frames",
+        f"Video codec: H.264 (libx264, CRF 23)",
+        f"Audio codec: AAC (192 kbps)",
+        f"Resolution: 1920x1080 @ 30fps",
         "",
         "OUTPUT VERIFICATION",
         "-" * 70,
     ]
 
     if verification.get('exists'):
-        status_symbol = "✓" if verification.get('duration_ok') else "⚠"
+        status_symbol = "OK" if verification.get('duration_ok') else "WARNING"
         report_lines.extend([
             f"{status_symbol} Video duration: {verification['actual_duration']:.0f}s "
             f"(target: {verification['expected_duration']:.0f}s, "
             f"diff: {verification['duration_diff']:.1f}s)",
-            f"✓ File size: {verification['file_size_mb']:.1f} MB",
+            f"File size: {verification['file_size_mb']:.1f} MB",
         ])
 
         if verification.get('resolution_ok'):
-            report_lines.append(f"✓ Resolution: {verification['width']}x{verification['height']}")
+            report_lines.append(f"Resolution: {verification['width']}x{verification['height']}")
         else:
-            report_lines.append(f"⚠ Resolution: {verification['width']}x{verification['height']} "
+            report_lines.append(f"WARNING Resolution: {verification['width']}x{verification['height']} "
                               f"(expected 1920x1080)")
 
-        report_lines.append(f"✓ Codec: {verification['codec']}")
+        report_lines.append(f"Codec: {verification['codec']}")
     else:
-        report_lines.append("✗ Video file not created")
+        report_lines.append("ERROR: Video file not created")
 
     report_lines.extend([
         "",
         "FILES CREATED",
         "-" * 70,
-        f"✓ final_video.mp4 ({verification.get('file_size_mb', 0):.1f} MB)",
-        f"✓ subtitles.srt",
-        f"✓ compilation_report.txt",
+        f"final_video.mp4 ({verification.get('file_size_mb', 0):.1f} MB)",
+        f"compilation_report.txt",
+        "",
+        "NOTE: Subtitles generated separately using generate_subtitles.py",
         "",
     ])
 
     # Overall status
     if verification.get('exists') and verification.get('duration_ok') and verification.get('resolution_ok'):
         report_lines.extend([
-            "STATUS: ✓ COMPILATION SUCCESSFUL",
+            "STATUS: COMPILATION SUCCESSFUL",
             "",
-            "Next step: Review video, then upload or distribute"
+            "Next step: Generate subtitles, then review and upload"
         ])
     else:
         report_lines.extend([
-            "STATUS: ⚠ COMPILATION COMPLETED WITH WARNINGS",
+            "STATUS: COMPILATION COMPLETED WITH WARNINGS",
             "",
             "Please review the warnings above and verify video quality"
         ])
@@ -968,11 +714,13 @@ def compile_video(video_folder: str) -> str:
     Main compilation function
 
     Workflow:
-    1. Uses actual measured audio durations (not script estimates)
-    2. Frames and audio start/end simultaneously (no delays)
-    3. Whisper provides precise word-level timestamps
-    4. Script text corrects Whisper transcription errors
-    5. Perfect subtitle synchronization
+    1. Parse script to get frame information
+    2. Validate input files and measure audio durations
+    3. Merge continuation frames (same visual, no transitions)
+    4. Build and execute FFmpeg command
+    5. Verify output and generate report
+
+    Note: Subtitles are generated separately using generate_subtitles.py
 
     Returns status message
     """
@@ -983,30 +731,30 @@ def compile_video(video_folder: str) -> str:
     print("=" * 70)
     print(f"Video folder: {video_folder}")
     print("Frames/audio sync: Simultaneous (no delay)")
-    print("Subtitles: Script text + Whisper timing")
+    print("Note: Subtitles generated separately (generate_subtitles.py)")
     print()
 
     try:
-        # Step 0: Parse script first to get frame count
-        print("[0/9] Parsing script.md...")
+        # Step 1: Parse script first to get frame count
+        print("[1/6] Parsing script.md...")
         script_path = os.path.join(video_folder, 'script.md')
         if not os.path.exists(script_path):
             raise VideoCompilationError(f"Script not found: {script_path}")
 
         frames = parse_script(script_path)
-        print(f"      ✓ Parsed {len(frames)} frames")
-        print(f"      ✓ Script duration: {frames[-1].end_time:.0f} seconds")
+        print(f"      Parsed {len(frames)} frames")
+        print(f"      Script duration: {frames[-1].end_time:.0f} seconds")
 
-        # Step 1: Validate input files and measure audio durations
-        print("\n[1/9] Validating input files and calculating actual frame times...")
+        # Step 2: Validate input files and measure audio durations
+        print("\n[2/6] Validating input files and calculating actual frame times...")
         num_frames, num_images, num_audio = validate_input_files(video_folder, frames)
-        print(f"\n      ✓ Found {num_images} frame images")
-        print(f"      ✓ Found {num_audio} audio files")
+        print(f"\n      Found {num_images} frame images")
+        print(f"      Found {num_audio} audio files")
 
         # Show actual vs script duration
         total_audio_duration = sum(f.actual_audio_duration for f in frames)
         total_script_duration = frames[-1].end_time
-        print(f"      ✓ Total audio duration: {total_audio_duration:.1f}s (script estimate: {total_script_duration:.0f}s)")
+        print(f"      Total audio duration: {total_audio_duration:.1f}s (script estimate: {total_script_duration:.0f}s)")
 
         if num_frames != num_images or num_frames != num_audio:
             raise FrameMismatchError(
@@ -1014,98 +762,67 @@ def compile_video(video_folder: str) -> str:
                 f"{num_images} images, {num_audio} audio files"
             )
 
-        # Step 2: Transcribe audio with Whisper for precise timing
-        print("\n[2/9] Transcribing audio with Whisper (this may take a minute)...")
-        for frame in frames:
-            # Transcribe using ACTUAL frame start time
-            frame.whisper_segments = transcribe_audio_with_whisper(
-                frame.audio_path,
-                frame.actual_start_time,  # Use calculated actual time, not script estimate
-                model_name="small"
-            )
-        print(f"      ✓ Transcribed all {len(frames)} audio files")
-
-        # Step 3: Align script text to Whisper timestamps (correct transcription errors)
-        print("\n[3/9] Aligning script text to Whisper timestamps...")
-        for frame in frames:
-            frame.aligned_words = align_script_to_whisper_timestamps(
-                frame.narration,  # Ground truth text from script
-                frame.whisper_segments  # Precise timestamps from Whisper
-            )
-        print(f"      ✓ Corrected transcription using actual script text")
-        print(f"      ✓ Preserved Whisper word-level timestamps")
-
-        # Step 4: Generate subtitles with corrected text + Whisper timing
-        print("\n[4/9] Generating perfectly-synced subtitles...")
-        subtitle_path = os.path.join(video_folder, 'subtitles.srt')
-        num_subtitles = generate_subtitles_from_corrected_timestamps(frames, subtitle_path)
-        print(f"      ✓ Created {num_subtitles} subtitle entries")
-        print(f"      ✓ Saved to: subtitles.srt")
-        print(f"      ✓ Subtitles: Correct text + Whisper timing")
-
-        # Step 4.5: Merge continuation frames (same visual, no jarring transitions)
-        print("\n[4.5/9] Detecting and merging continuation frames...")
+        # Step 3: Merge continuation frames (same visual, no jarring transitions)
+        print("\n[3/6] Detecting and merging continuation frames...")
         segments = merge_continuation_frames(frames, video_folder)
 
         # Count how many frames were merged
-        merged_count = sum(1 for seg in segments if len(seg.frames) > 1)
         continuation_frames = sum(len(seg.frames) - 1 for seg in segments if len(seg.frames) > 1)
 
         if continuation_frames > 0:
-            print(f"      ✓ Found {continuation_frames} continuation frame(s)")
-            print(f"      ✓ Merged into {len(segments)} video segments (was {len(frames)} frames)")
+            print(f"      Found {continuation_frames} continuation frame(s)")
+            print(f"      Merged into {len(segments)} video segments (was {len(frames)} frames)")
             for seg in segments:
                 if len(seg.frames) > 1:
                     print(f"        - Frames {seg.frame_numbers}: merged (same visual)")
 
             # Prepare merged audio files
-            print("      ✓ Concatenating audio for merged segments...")
+            print("      Concatenating audio for merged segments...")
             prepare_merged_segments(segments, video_folder)
         else:
-            print(f"      ✓ No continuation frames detected")
-            print(f"      ✓ {len(segments)} segments (1:1 with frames)")
+            print(f"      No continuation frames detected")
+            print(f"      {len(segments)} segments (1:1 with frames)")
 
-        # Step 5: Build FFmpeg command
-        print("\n[5/9] Building FFmpeg command...")
+        # Step 4: Build FFmpeg command
+        print("\n[4/6] Building FFmpeg command...")
+        subtitle_path = os.path.join(video_folder, 'subtitles.srt')
         if continuation_frames > 0:
             ffmpeg_cmd = build_ffmpeg_command_with_segments(video_folder, segments, subtitle_path)
-            print(f"      ✓ Using merged segment compilation")
+            print(f"      Using merged segment compilation")
         else:
             ffmpeg_cmd = build_ffmpeg_command(video_folder, frames, subtitle_path)
-        print(f"      ✓ Filter graph created")
-        print(f"      ✓ {len(segments)} segments with 0.5s crossfade transitions")
-        print(f"      ✓ Using actual audio durations (no estimates)")
-        print(f"      ✓ Frames and audio synchronized (no delay)")
+        print(f"      Filter graph created")
+        print(f"      {len(segments)} segments with 0.5s crossfade transitions")
+        print(f"      Using actual audio durations (no estimates)")
+        print(f"      Frames and audio synchronized (no delay)")
 
-        # Step 6: Execute compilation
-        print("\n[6/9] Compiling video...")
+        # Step 5: Execute compilation
+        print("\n[5/6] Compiling video...")
         success, message = execute_ffmpeg(ffmpeg_cmd)
         if not success:
             raise FFmpegError(message)
 
-        # Step 7: Verify output
-        print("\n[7/9] Verifying output...")
+        # Step 6: Verify output and generate report
+        print("\n[6/6] Verifying output and generating report...")
         verification = verify_compilation(video_folder, frames)
 
         if verification.get('duration_ok'):
-            print(f"      ✓ Duration verified: {verification['actual_duration']:.0f}s")
+            print(f"      Duration verified: {verification['actual_duration']:.0f}s")
         else:
-            print(f"      ⚠ Duration off by {verification['duration_diff']:.1f}s")
+            print(f"      Duration off by {verification['duration_diff']:.1f}s")
 
         if verification.get('resolution_ok'):
-            print(f"      ✓ Resolution verified: 1920x1080")
+            print(f"      Resolution verified: 1920x1080")
         else:
-            print(f"      ⚠ Resolution: {verification['width']}x{verification['height']}")
+            print(f"      Resolution: {verification['width']}x{verification['height']}")
 
-        print(f"      ✓ File size: {verification['file_size_mb']:.1f} MB")
+        print(f"      File size: {verification['file_size_mb']:.1f} MB")
 
-        # Step 8: Generate report
-        print("\n[8/9] Generating report...")
         end_time = datetime.now()
         compilation_time = (end_time - start_time).total_seconds()
 
         report = generate_report(
-            video_folder, frames, num_subtitles,
+            video_folder, frames,
             verification, compilation_time
         )
 
@@ -1113,31 +830,31 @@ def compile_video(video_folder: str) -> str:
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
 
-        print(f"      ✓ Report saved to: compilation_report.txt")
+        print(f"      Report saved to: compilation_report.txt")
 
         # Print summary
         print("\n" + "=" * 70)
         print("COMPILATION COMPLETE")
         print("=" * 70)
-        print(f"✓ Output: {video_folder}/final_video.mp4")
-        print(f"✓ Duration: {verification['actual_duration']:.0f}s (target: {verification['expected_duration']:.0f}s)")
-        print(f"✓ File size: {verification['file_size_mb']:.1f} MB")
-        print(f"✓ Compilation time: {compilation_time:.1f}s")
+        print(f"Output: {video_folder}/final_video.mp4")
+        print(f"Duration: {verification['actual_duration']:.0f}s (target: {verification['expected_duration']:.0f}s)")
+        print(f"File size: {verification['file_size_mb']:.1f} MB")
+        print(f"Compilation time: {compilation_time:.1f}s")
         print("\nReady for review!")
 
         return "SUCCESS"
 
     except FrameMismatchError as e:
-        print(f"\n✗ ERROR: Frame mismatch - {e}")
+        print(f"\nERROR: Frame mismatch - {e}")
         return f"ERROR: {e}"
     except TimingError as e:
-        print(f"\n✗ ERROR: Timing issue - {e}")
+        print(f"\nERROR: Timing issue - {e}")
         return f"ERROR: {e}"
     except FFmpegError as e:
-        print(f"\n✗ ERROR: FFmpeg failed - {e}")
+        print(f"\nERROR: FFmpeg failed - {e}")
         return f"ERROR: {e}"
     except Exception as e:
-        print(f"\n✗ ERROR: Unexpected error - {e}")
+        print(f"\nERROR: Unexpected error - {e}")
         import traceback
         traceback.print_exc()
         return f"ERROR: {e}"

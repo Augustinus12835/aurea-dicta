@@ -41,9 +41,11 @@ aurea_dicta/
 │   ├── generate_briefs.py
 │   ├── generate_data_charts.py
 │   ├── generate_scripts.py
+│   ├── verify_math.py            # Math verification (Claude extended thinking)
 │   ├── generate_slides_gemini.py
 │   ├── generate_tts_elevenlabs.py
 │   ├── compile_video.py
+│   ├── generate_subtitles.py     # Whisper-aligned subtitles
 │   └── regenerate_frame.py
 ├── templates/                 # Style guides and templates
 │   ├── teaching_style_guide.md
@@ -207,15 +209,23 @@ python scripts/pipeline.py status MY_LECTURE/Video-3
 │    >>> REVIEW CHECKPOINT        │
 │ 6. Generate narration script    │
 │    >>> REVIEW CHECKPOINT        │
-│ 7. Generate frame images        │
+│ 7. Verify math (if applicable)  │
 │    >>> REVIEW CHECKPOINT        │
-│ 8. Generate TTS audio           │
+│ 8. Generate frame images        │
 │    >>> REVIEW CHECKPOINT        │
-│ 9. Compile final video          │
+│ 9. Generate TTS audio           │
+│    >>> REVIEW CHECKPOINT        │
+│ 10. Compile final video         │
 └─────────────────────────────────┘
          │
          ▼
    8-10 Concept Videos
+         │
+         ▼ (run separately)
+┌─────────────────────────────────┐
+│ POST-PIPELINE (optional)        │
+│ • Generate subtitles (Whisper)  │
+└─────────────────────────────────┘
 ```
 
 ### Review Checkpoints
@@ -245,6 +255,7 @@ pipeline/MY_LECTURE/
     │   ├── visual_1.png
     │   └── visual_1_code.py
     ├── script.md           # Frame-by-frame narration
+    ├── math_verification.json  # Verified math steps (if applicable)
     ├── frames/             # Slide images (Gemini)
     │   ├── frame_0.png
     │   ├── frame_1.png
@@ -253,7 +264,7 @@ pipeline/MY_LECTURE/
     │   ├── frame_0.mp3
     │   └── ...
     ├── final_video.mp4     # Compiled video
-    └── subtitles.srt       # Aligned subtitles
+    └── subtitles.srt       # Aligned subtitles (generated separately)
 ```
 
 ## Frame Generation
@@ -303,6 +314,59 @@ python scripts/regenerate_frame.py pipeline/MY_LECTURE/Video-1 5 -v
 - Describe exact positions: "label on the RIGHT side, not left"
 - For complex technical diagrams, consider matplotlib generation instead
 
+## Math Verification
+
+For math/science content, verify calculations and generate TTS-friendly narration:
+
+```bash
+# Verify math in a video (uses Claude extended thinking)
+python scripts/verify_math.py pipeline/MY_LECTURE/Video-1
+
+# Verify specific frames only
+python scripts/verify_math.py pipeline/MY_LECTURE/Video-1 --frames 5,7,8
+
+# Verbose mode (see verification details)
+python scripts/verify_math.py pipeline/MY_LECTURE/Video-1 --verbose
+
+# Force re-verification
+python scripts/verify_math.py pipeline/MY_LECTURE/Video-1 --force
+```
+
+**What it does:**
+- **Detects calculation frames**: Uses keyword matching (factor, simplify, substitute, etc.)
+- **Verifies math**: Uses Claude's extended thinking for thorough verification
+- **Generates two outputs per frame**:
+  - `natural_narration`: TTS-friendly text (spells out symbols like "square root of x")
+  - `math_steps`: Precise LaTeX-style notation for Gemini slides
+
+**Automatic integration:**
+- Frame generation uses `math_steps` for accurate mathematical notation
+- TTS uses `natural_narration` for natural pronunciation
+- Subtitles use `natural_narration` to match audio
+
+**Note:** Only runs if `requires_math=true` in `visual_specs.json`.
+
+## Subtitle Generation
+
+Subtitles are generated separately from video compilation (resource-intensive Whisper transcription):
+
+```bash
+# Generate subtitles for all videos in a lecture
+python scripts/generate_subtitles.py pipeline/MY_LECTURE
+
+# Generate for specific video only
+python scripts/generate_subtitles.py pipeline/MY_LECTURE --video 3
+
+# Force regenerate (overwrite existing subtitles.srt)
+python scripts/generate_subtitles.py pipeline/MY_LECTURE --force
+```
+
+**Features:**
+- Uses Whisper for precise word-level timing alignment
+- **Math-aware**: Uses `natural_narration` from `math_verification.json` when available
+- Ensures subtitles match TTS audio (e.g., "square root of x" instead of "√x")
+- Batch processing for entire lectures
+
 ## Running Individual Scripts
 
 For debugging or custom workflows, run scripts individually:
@@ -326,14 +390,20 @@ python scripts/generate_data_charts.py pipeline/MY_LECTURE --video 1
 # 6. Generate scripts
 python scripts/generate_scripts.py pipeline/MY_LECTURE --video 1
 
-# 7. Generate slides
+# 7. Verify math (for math/science content)
+python scripts/verify_math.py pipeline/MY_LECTURE/Video-1
+
+# 8. Generate slides
 python scripts/generate_slides_gemini.py pipeline/MY_LECTURE/Video-1
 
-# 8. Generate TTS audio
+# 9. Generate TTS audio
 python scripts/generate_tts_elevenlabs.py pipeline/MY_LECTURE/Video-1/script.md
 
-# 9. Compile video
+# 10. Compile video
 python scripts/compile_video.py pipeline/MY_LECTURE/Video-1
+
+# 11. Generate subtitles (run separately - resource intensive)
+python scripts/generate_subtitles.py pipeline/MY_LECTURE --video 1
 ```
 
 ## Troubleshooting

@@ -8,8 +8,10 @@ Configure VOICE_ID below with your preferred voice (default or cloned).
 import os
 import sys
 import re
+import json
 import time
 from pathlib import Path
+from typing import Dict, Optional
 from dotenv import load_dotenv
 from mutagen.mp3 import MP3
 from elevenlabs.client import ElevenLabs
@@ -117,6 +119,36 @@ def clean_narration_text(text):
     return text
 
 
+def load_math_verification(script_dir: str) -> Optional[Dict]:
+    """Load math_verification.json if it exists."""
+    verification_path = os.path.join(script_dir, "math_verification.json")
+    if not os.path.exists(verification_path):
+        return None
+    try:
+        with open(verification_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def get_natural_narration(frame_num: int, original_text: str, math_data: Optional[Dict]) -> str:
+    """
+    Get the best narration text for a frame.
+
+    Prefers natural_narration from math_verification.json if available,
+    otherwise falls back to the original text (cleaned).
+    """
+    if math_data:
+        frame_key = str(frame_num)
+        frame_data = math_data.get("frames", {}).get(frame_key)
+        if frame_data:
+            natural = frame_data.get("natural_narration")
+            if natural and frame_data.get("verification_status") in ("correct", "corrected"):
+                return natural
+
+    return original_text
+
+
 def call_elevenlabs_api(text):
     """
     Call ElevenLabs API to generate audio from text
@@ -154,9 +186,14 @@ def get_audio_duration(file_path):
         return None
 
 
-def generate_audio_for_frames(frames, output_dir):
+def generate_audio_for_frames(frames, output_dir, math_data: Optional[Dict] = None):
     """
     Generate audio files for all frames
+
+    Args:
+        frames: List of Frame objects
+        output_dir: Directory to save audio files
+        math_data: Optional math verification data for natural narration
 
     Returns:
         list: Report entries for each frame
@@ -169,6 +206,14 @@ def generate_audio_for_frames(frames, output_dir):
     for frame in frames:
         frame_filename = f"frame_{frame.number}.mp3"
         output_path = os.path.join(output_dir, frame_filename)
+
+        # Get the best narration (prefer natural_narration from verification)
+        narration_text = get_natural_narration(frame.number, frame.text, math_data)
+
+        # Update frame text if we got natural narration
+        if narration_text != frame.text:
+            print(f"\n  Frame {frame.number}: Using natural narration from math_verification.json")
+            frame.text = narration_text
 
         print(f"\nProcessing Frame {frame.number}...")
         print(f"  Target duration: {frame.duration}s")
@@ -336,8 +381,14 @@ def main():
         frames = parse_script(script_path)
         print(f"✓ Found {len(frames)} frames")
 
+        # Load math verification if available
+        math_data = load_math_verification(script_dir)
+        if math_data:
+            verified_count = len(math_data.get("frames", {}))
+            print(f"✓ Math verification available ({verified_count} frames)")
+
         # Generate audio
-        results = generate_audio_for_frames(frames, audio_dir)
+        results = generate_audio_for_frames(frames, audio_dir, math_data)
 
         # Print report
         print_report(results)

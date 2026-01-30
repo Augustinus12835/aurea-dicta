@@ -36,6 +36,7 @@ REVIEW_CHECKPOINTS = {
     "brief": "Review video_brief.md",
     "charts": "Review generated data charts in diagrams/",
     "script": "Review script.md",
+    "verify_math": "Review math_verification.json for accuracy",
     "frames": "Review generated frames in frames/",
     "tts": "Review generated audio in audio/ (check for errors, silence, pronunciation)",
 }
@@ -44,7 +45,7 @@ REVIEW_CHECKPOINTS = {
 WEEK_STEPS = ["transcribe", "clean", "segment"]
 
 # Video-level steps (run per video)
-VIDEO_STEPS = ["brief", "charts", "script", "frames", "tts", "compile", "study_guide"]
+VIDEO_STEPS = ["brief", "charts", "script", "verify_math", "frames", "tts", "compile", "study_guide"]
 
 
 # =============================================================================
@@ -256,9 +257,13 @@ class VideoState:
     brief_exists: bool = False
     visual_specs_exists: bool = False
     script_exists: bool = False
+    math_verification_exists: bool = False
     video_exists: bool = False
     slides_pdf_exists: bool = False
     study_guide_pdf_exists: bool = False
+
+    # Flags
+    requires_math: bool = False
 
     # Counts
     charts_needed: int = 0
@@ -284,6 +289,15 @@ class VideoState:
     @property
     def script_status(self) -> StepStatus:
         return StepStatus.COMPLETE if self.script_exists else StepStatus.PENDING
+
+    @property
+    def verify_math_status(self) -> StepStatus:
+        # If math_verification.json exists, it's complete (regardless of requires_math flag)
+        if self.math_verification_exists:
+            return StepStatus.COMPLETE
+        if not self.requires_math:
+            return StepStatus.SKIPPED
+        return StepStatus.PENDING
 
     @property
     def frames_status(self) -> StepStatus:
@@ -322,6 +336,9 @@ class VideoState:
 
         if not self.script_exists:
             return "script"
+
+        if self.verify_math_status == StepStatus.PENDING:
+            return "verify_math"
 
         if self.frames_status in (StepStatus.PENDING, StepStatus.PARTIAL):
             return "frames"
@@ -387,6 +404,7 @@ def detect_video_state(video_dir: Path) -> VideoState:
     state.brief_exists = (video_dir / "video_brief.md").exists()
     state.visual_specs_exists = (video_dir / "visual_specs.json").exists()
     state.script_exists = (video_dir / "script.md").exists()
+    state.math_verification_exists = (video_dir / "math_verification.json").exists()
 
     # Check final video (with size validation)
     final_video = video_dir / "final_video.mp4"
@@ -396,9 +414,12 @@ def detect_video_state(video_dir: Path) -> VideoState:
     if state.brief_exists:
         state.video_title = extract_video_title(video_dir / "video_brief.md")
 
-    # Count charts needed vs found
+    # Check requires_math from visual_specs.json
     if state.visual_specs_exists:
         state.charts_needed = count_charts_needed(video_dir / "visual_specs.json")
+        state.requires_math = check_requires_math(video_dir / "visual_specs.json")
+    else:
+        state.requires_math = False  # Default to false if no specs
 
     diagrams_dir = video_dir / "diagrams"
     if diagrams_dir.exists():
@@ -450,6 +471,15 @@ def count_charts_needed(specs_path: Path) -> int:
         return sum(1 for v in visuals if v.get("type") == "data_chart")
     except (json.JSONDecodeError, KeyError):
         return 0
+
+
+def check_requires_math(specs_path: Path) -> bool:
+    """Check if video requires math from visual_specs.json."""
+    try:
+        specs = json.loads(specs_path.read_text())
+        return specs.get("requires_math", False)
+    except (json.JSONDecodeError, KeyError):
+        return False
 
 
 def count_frames_in_script(script_path: Path) -> int:
@@ -539,6 +569,12 @@ def print_video_status(state: VideoState, verbose: bool = True):
 
     print(f"  {status_symbol(state.script_status)} script.md" +
           (f" ({state.expected_frames} frames)" if state.script_exists else ""))
+
+    # Math verification status
+    if state.verify_math_status == StepStatus.SKIPPED:
+        print(f"  {status_symbol(state.verify_math_status)} math_verification.json (not a math video)")
+    else:
+        print(f"  {status_symbol(state.verify_math_status)} math_verification.json")
 
     # Frames with count
     if state.expected_frames > 0:
@@ -727,6 +763,16 @@ def run_video_step(step: str, video_dir: Path, lecture_dir: Path) -> bool:
 
     elif step == "script":
         return run_script("generate_scripts.py", [str(lecture_dir), "--video", video_num])
+
+    elif step == "verify_math":
+        # Check if math verification is needed
+        specs_path = video_dir / "visual_specs.json"
+        if specs_path.exists():
+            requires_math = check_requires_math(specs_path)
+            if not requires_math:
+                print(f"  {Colors.DIM}No math verification needed (requires_math=false), skipping...{Colors.RESET}")
+                return True
+        return run_script("verify_math.py", [str(video_dir)])
 
     elif step == "frames":
         return run_script("generate_slides_gemini.py", [str(video_dir)])
@@ -956,6 +1002,8 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
                 continue
             if step == "script" and video_state.script_exists:
                 continue
+            if step == "verify_math" and video_state.verify_math_status in (StepStatus.COMPLETE, StepStatus.SKIPPED):
+                continue
             if step == "frames" and video_state.frames_status == StepStatus.COMPLETE:
                 continue
             if step == "tts" and video_state.tts_status == StepStatus.COMPLETE:
@@ -969,6 +1017,7 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
                 {"brief": "Generate video brief",
                  "charts": "Generate data charts",
                  "script": "Generate narration script",
+                 "verify_math": "Verify math calculations",
                  "frames": "Generate slide frames",
                  "tts": "Generate TTS audio",
                  "compile": "Compile final video",
@@ -1088,6 +1137,8 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
                 continue
             if step == "script" and video_state.script_exists:
                 continue
+            if step == "verify_math" and video_state.verify_math_status in (StepStatus.COMPLETE, StepStatus.SKIPPED):
+                continue
             if step == "frames" and video_state.frames_status == StepStatus.COMPLETE:
                 continue
             if step == "tts" and video_state.tts_status == StepStatus.COMPLETE:
@@ -1100,6 +1151,7 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
             {"brief": "Generate video brief",
              "charts": "Generate data charts",
              "script": "Generate narration script",
+             "verify_math": "Verify math calculations",
              "frames": "Generate slide frames",
              "tts": "Generate TTS audio",
              "compile": "Compile final video",
