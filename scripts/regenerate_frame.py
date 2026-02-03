@@ -5,6 +5,9 @@ Regenerate specific frames with Gemini
 Use this script to regenerate individual frames after review.
 Allows providing custom instructions to correct issues.
 
+This script uses the SAME prompt structure as generate_slides_gemini.py
+to ensure consistency, with the addition of custom correction instructions.
+
 Usage:
     python regenerate_frame.py <video_dir> <frame_number> [--instruction "custom instruction"]
 
@@ -16,8 +19,8 @@ Examples:
 import sys
 import json
 import argparse
-from pathlib import Path
 import io
+from pathlib import Path
 
 # Add parent to path for utils
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,44 +29,20 @@ from scripts.utils.gemini_client import GeminiClient
 from scripts.utils.script_parser import load_script
 from PIL import Image
 
-# Configuration
-OUTPUT_SIZE = (1920, 1080)
-
-# Style prompt (same as generate_slides_gemini.py)
-STYLE_PROMPT = """Educational slide with hand-drawn, sketch-like aesthetic.
-
-STYLE REQUIREMENTS:
-- Hand-drawn illustration style (NOT corporate PowerPoint)
-- Clean white or cream background (#FFFEF7)
-- Color palette:
-  * Blue (#3B82F6) for risk-related concepts
-  * Orange (#F97316) for return-related concepts
-  * Green (#22C55E) for time/growth concepts
-  * Red (#EF4444) for warnings/uncertainty
-- Typography:
-  * Hand-written style headers (bold, clear)
-  * Clean sans-serif body text (legible at 1080p)
-- Professional but approachable
-- NO course codes, university branding, or dates
-- Resolution: 1920x1080 (16:9)
-"""
-
-# No-math content: we simply omit all math-related prompt text entirely.
-# By not mentioning math at all, we avoid activating math-related neural pathways.
-
-
-def load_visual_specs(video_dir: Path) -> dict:
-    """Load visual_specs.json."""
-    import json
-    specs_path = video_dir / "visual_specs.json"
-    if not specs_path.exists():
-        return {"visuals": [], "requires_math": False}  # Default: no math
-    with open(specs_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        # Ensure requires_math exists (backward compatibility)
-        if "requires_math" not in data:
-            data["requires_math"] = False  # Default: no math (safer)
-        return data
+# Import shared functions from generate_slides_gemini.py
+from scripts.generate_slides_gemini import (
+    STYLE_PROMPT,
+    MATH_CONTENT_RULES,
+    OUTPUT_SIZE,
+    is_math_content,
+    load_visual_specs,
+    load_math_verification,
+    get_verified_math_steps,
+    get_visual_spec_by_ref,
+    classify_frame,
+    build_slide_prompt,
+    resize_to_1080p,
+)
 
 
 def parse_script_from_dir(video_dir: Path) -> tuple:
@@ -79,21 +58,12 @@ def parse_script_from_dir(video_dir: Path) -> tuple:
         frames.append({
             "number": frame.number,
             "timing": frame.timing_str,
+            "word_count": frame.word_count,
             "narration": frame.narration,
             "visual_ref": frame.visual.reference if frame.visual else None
         })
 
     return script_data.title, frames
-
-
-def resize_to_1080p(image_bytes: bytes) -> bytes:
-    """Resize image to exactly 1920x1080."""
-    img = Image.open(io.BytesIO(image_bytes))
-    if img.size != OUTPUT_SIZE:
-        img = img.resize(OUTPUT_SIZE, Image.Resampling.LANCZOS)
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    return output.getvalue()
 
 
 def regenerate_frame(
@@ -104,6 +74,8 @@ def regenerate_frame(
 ) -> bool:
     """
     Regenerate a specific frame with optional custom instruction.
+
+    Uses the same prompt structure as generate_slides_gemini.py for consistency.
 
     Args:
         video_dir: Path to video directory
@@ -137,42 +109,53 @@ def regenerate_frame(
         print(f"Error: Frame {frame_number} not found in script")
         return False
 
-    visual_ref = frame.get("visual_ref", "")
+    visual_ref = frame.get("visual_ref", "") or ""
     narration = frame.get("narration", "")
 
-    # Load visual specs to get requires_math flag
+    # Load visual specs
     specs = load_visual_specs(video_dir)
     requires_math = specs.get("requires_math", False)
+
+    # Load math verification data
+    math_data = load_math_verification(video_dir)
+
+    # Get available chart files
+    diagrams_dir = video_dir / "diagrams"
+    chart_files = [f.name for f in diagrams_dir.glob("*.png")] if diagrams_dir.exists() else []
+
+    # Get visual spec for this frame
+    visual_spec = get_visual_spec_by_ref(visual_ref, specs)
+
+    # Classify frame type
+    frame_type = classify_frame(frame, visual_spec, chart_files)
+
+    # Get verified math steps if available
+    verified_steps = get_verified_math_steps(frame_number, math_data)
 
     print("=" * 60)
     print(f"Regenerating Frame {frame_number}")
     print("=" * 60)
     print(f"Video: {video_dir}")
+    print(f"Title: {title}")
+    print(f"Frame type: {frame_type}")
     print(f"Visual: {visual_ref[:60]}..." if len(visual_ref) > 60 else f"Visual: {visual_ref}")
     print(f"Requires math: {requires_math}")
+    if verified_steps:
+        print(f"Math verification: Available")
     if custom_instruction:
         print(f"Custom instruction: {custom_instruction}")
     print()
 
-    # For non-math content: include NO math-related text at all
-    # This avoids activating math-related neural pathways in the model
-    narration_preview = narration[:500] if len(narration) > 500 else narration
-
-    prompt = f"""{STYLE_PROMPT}
-
-VIDEO CONTEXT:
-- Topic: "{title}"
-
-NARRATION FOR THIS FRAME:
-"{narration_preview}"
-
-VISUAL SPECIFICATION:
-{visual_ref}
-
-CRITICAL: DO NOT include any frame numbers, slide numbers, timestamps,
-durations, "Frame X of Y", or any technical metadata anywhere in the
-generated image. The image should contain ONLY the visual content.
-"""
+    # Build prompt using the SAME function as generate_slides_gemini.py
+    prompt = build_slide_prompt(
+        frame=frame,
+        frame_type=frame_type,
+        visual_spec=visual_spec,
+        title=title,
+        total_frames=len(frames),
+        requires_math=requires_math,
+        verified_math_steps=verified_steps
+    )
 
     # Add custom instruction if provided
     if custom_instruction:
@@ -182,12 +165,13 @@ IMPORTANT CORRECTION/INSTRUCTION:
 {custom_instruction}
 
 Make sure to follow this instruction carefully when generating the image.
+This correction takes priority over other visual specifications.
 """
 
     if verbose:
         print("Prompt:")
         print("-" * 40)
-        print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+        print(prompt)
         print("-" * 40)
         print()
 
@@ -202,7 +186,12 @@ Make sure to follow this instruction carefully when generating the image.
 
     print("Generating image...")
     try:
-        image_bytes = client.generate_image(prompt)
+        image_bytes = client.generate_image(
+            prompt=prompt,
+            style="hand-drawn educational",
+            width=1920,
+            height=1080
+        )
         image_bytes = resize_to_1080p(image_bytes)
     except Exception as e:
         print(f"Error generating image: {e}")

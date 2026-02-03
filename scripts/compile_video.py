@@ -126,37 +126,19 @@ def detect_continuation_frames(frames: List[FrameData], video_folder: str) -> No
 
 def merge_continuation_frames(frames: List[FrameData], video_folder: str) -> List[MergedSegment]:
     """
-    Merge consecutive frames that share the same visual into MergedSegments.
+    Convert frames to MergedSegments (one segment per frame, no merging).
 
-    Returns list of MergedSegments. Each segment contains one or more frames.
-    Single-frame segments have no transitions removed.
-    Multi-frame segments will be rendered as one image with concatenated audio.
+    Previously this function would merge consecutive frames that share the same
+    visual spec. This caused issues where different narration content would use
+    the same image. Now each frame is its own segment.
+
+    Returns list of MergedSegments, one per frame.
     """
     if not frames:
         return []
 
-    # First detect which frames are continuations
-    detect_continuation_frames(frames, video_folder)
-
-    segments = []
-    current_group = [frames[0]]
-
-    for i in range(1, len(frames)):
-        frame = frames[i]
-        prev_frame = frames[i - 1]
-
-        # Check if this frame continues the previous one
-        if frame.continuation_of == prev_frame.number:
-            current_group.append(frame)
-        else:
-            # Start new segment
-            segments.append(MergedSegment(current_group))
-            current_group = [frame]
-
-    # Don't forget the last group
-    segments.append(MergedSegment(current_group))
-
-    return segments
+    # Each frame becomes its own segment (no merging)
+    return [MergedSegment([frame]) for frame in frames]
 
 
 def concatenate_audio_files(audio_paths: List[str], output_path: str) -> bool:
@@ -761,32 +743,13 @@ def compile_video(video_folder: str) -> str:
         # Step 3: Merge continuation frames (same visual, no jarring transitions)
         print("\n[3/6] Detecting and merging continuation frames...")
         segments = merge_continuation_frames(frames, video_folder)
-
-        # Count how many frames were merged
-        continuation_frames = sum(len(seg.frames) - 1 for seg in segments if len(seg.frames) > 1)
-
-        if continuation_frames > 0:
-            print(f"      Found {continuation_frames} continuation frame(s)")
-            print(f"      Merged into {len(segments)} video segments (was {len(frames)} frames)")
-            for seg in segments:
-                if len(seg.frames) > 1:
-                    print(f"        - Frames {seg.frame_numbers}: merged (same visual)")
-
-            # Prepare merged audio files
-            print("      Concatenating audio for merged segments...")
-            prepare_merged_segments(segments, video_folder)
-        else:
-            print(f"      No continuation frames detected")
-            print(f"      {len(segments)} segments (1:1 with frames)")
+        print(f"      No continuation frames detected")
+        print(f"      {len(segments)} segments (1:1 with frames)")
 
         # Step 4: Build FFmpeg command
         print("\n[4/6] Building FFmpeg command...")
         subtitle_path = os.path.join(video_folder, 'subtitles.srt')
-        if continuation_frames > 0:
-            ffmpeg_cmd = build_ffmpeg_command_with_segments(video_folder, segments, subtitle_path)
-            print(f"      Using merged segment compilation")
-        else:
-            ffmpeg_cmd = build_ffmpeg_command(video_folder, frames, subtitle_path)
+        ffmpeg_cmd = build_ffmpeg_command(video_folder, frames, subtitle_path)
         print(f"      Filter graph created")
         print(f"      {len(segments)} segments with 0.5s crossfade transitions")
         print(f"      Using actual audio durations (no estimates)")
