@@ -309,7 +309,14 @@ def classify_frame(frame: Dict, visual_spec: Optional[Dict], chart_files: List[s
 def build_conceptual_diagram_prompt(visual_spec: Optional[Dict]) -> str:
     """
     Build detailed prompt for conceptual diagram from visual_specs.json.
-    Focuses on VISUAL elements, not text.
+
+    Extracts ALL available specifications including:
+    - Basic info: name, purpose, style, elements
+    - Geometric specs: axis_range, coordinates, equations
+    - Visual specs: colors, color_coding, annotations
+    - Math specs: formula, variables, example_calculation
+
+    This ensures Gemini receives precise instructions for math/finance graphs.
     """
     if not visual_spec:
         return "Generate a simple visual diagram. Use icons and shapes, minimal text."
@@ -319,12 +326,68 @@ def build_conceptual_diagram_prompt(visual_spec: Optional[Dict]) -> str:
     elements = visual_spec.get("elements", [])
     style = visual_spec.get("style", "hand-drawn")
 
+    # Extract geometric specifications
+    axis_range = visual_spec.get("axis_range", {})
+    colors = visual_spec.get("colors", {})
+    color_coding = visual_spec.get("color_coding", {})
+    styling = visual_spec.get("styling", {})  # May contain color specs like curve_color, tangent_line_color
+
+    # Extract math specifications
+    formula = visual_spec.get("formula", "")
+    variables = visual_spec.get("variables", {})
+    example_calculation = visual_spec.get("example_calculation", {})
+    annotations = visual_spec.get("annotations", [])
+
     prompt = f"""
 DIAGRAM NAME: {name}
 VISUAL GOAL: {purpose}
-
-DRAW THESE VISUAL ELEMENTS (use shapes/icons, label with 1-3 words only):
+STYLE: {style}
 """
+
+    # Add axis range specifications (critical for correct graph scale)
+    if axis_range:
+        prompt += "\nAXIS SPECIFICATIONS (use these exact ranges):\n"
+        if "x" in axis_range:
+            x_range = axis_range["x"]
+            if isinstance(x_range, list) and len(x_range) == 2:
+                prompt += f"- X-axis: from {x_range[0]} to {x_range[1]}\n"
+        if "y" in axis_range:
+            y_range = axis_range["y"]
+            if isinstance(y_range, list) and len(y_range) == 2:
+                prompt += f"- Y-axis: from {y_range[0]} to {y_range[1]}\n"
+
+    # Add formula if specified (for math diagrams)
+    if formula:
+        prompt += f"\nMAIN EQUATION/FORMULA:\n{formula}\n"
+
+    # Add variable definitions
+    if variables:
+        prompt += "\nVARIABLE DEFINITIONS:\n"
+        for var_name, var_desc in variables.items():
+            prompt += f"- {var_name}: {var_desc}\n"
+
+    # Add color specifications
+    # Extract color-related entries from styling dict
+    styling_colors = {k: v for k, v in styling.items()
+                      if 'color' in k.lower() or k in ('curve', 'tangent_line', 'point', 'line')}
+    combined_colors = {**colors, **color_coding, **styling_colors}
+    if combined_colors:
+        prompt += "\nCOLOR SPECIFICATIONS (use these exact colors):\n"
+        for element_name, color_value in combined_colors.items():
+            prompt += f"- {element_name}: {color_value}\n"
+
+    # Add other styling options (non-color)
+    styling_options = {k: v for k, v in styling.items()
+                       if 'color' not in k.lower() and k not in ('curve', 'tangent_line', 'point', 'line')}
+    if styling_options:
+        prompt += "\nSTYLING OPTIONS:\n"
+        for opt_name, opt_value in styling_options.items():
+            # Convert snake_case to readable format
+            readable_name = opt_name.replace('_', ' ')
+            prompt += f"- {readable_name}: {opt_value}\n"
+
+    # Add elements to draw
+    prompt += "\nVISUAL ELEMENTS TO DRAW:\n"
 
     for elem in elements:
         if isinstance(elem, dict):
@@ -354,27 +417,102 @@ DRAW THESE VISUAL ELEMENTS (use shapes/icons, label with 1-3 words only):
                 prompt += f"- Arrow/branch: '{label}'\n"
 
             elif elem_type == "calculation":
-                formula = elem.get("formula", "")
-                prompt += f"- Show formula: {formula}\n"
+                calc_formula = elem.get("formula", "")
+                prompt += f"- Show formula: {calc_formula}\n"
 
             elif elem_type == "annotation":
                 text = elem.get("text", "")
-                # Only include if it's short
-                if len(text) < 30:
-                    prompt += f"- Small label: '{text}'\n"
+                ann_style = elem.get("style", "")
+                position = elem.get("position", "")
+                if text:
+                    prompt += f"- Annotation: '{text}'"
+                    if ann_style:
+                        prompt += f" (style: {ann_style})"
+                    if position:
+                        prompt += f" at {position}"
+                    prompt += "\n"
 
             else:
                 # Generic element - extract just the visual part
                 label = elem.get("label", elem.get("text", str(elem)))
-                if len(str(label)) < 50:  # Skip long text elements
+                if len(str(label)) < 100:  # Allow longer for coordinate specs
                     prompt += f"- {label}\n"
         else:
-            # String elements - only include if visual/short
-            if len(str(elem)) < 50 and not any(word in str(elem).lower() for word in ['explain', 'describe', 'narration']):
-                prompt += f"- {elem}\n"
+            # String elements - these often contain important geometric details
+            elem_str = str(elem)
+            # Skip only truly non-visual descriptions
+            skip_words = ['explain', 'describe', 'narration', 'animation sequence']
+            if not any(word in elem_str.lower() for word in skip_words):
+                prompt += f"- {elem_str}\n"
+
+    # Add example calculation steps (for math walkthroughs)
+    if example_calculation:
+        prompt += "\nCALCULATION STEPS TO SHOW:\n"
+        # Handle both dict and list formats
+        if isinstance(example_calculation, dict):
+            # Sort by key to maintain order (line_1, line_2, etc.)
+            sorted_keys = sorted(example_calculation.keys(),
+                                key=lambda x: int(''.join(filter(str.isdigit, x)) or '0'))
+            for key in sorted_keys:
+                step = example_calculation[key]
+                if isinstance(step, dict):
+                    expr = step.get("expression", "")
+                    annotation = step.get("annotation", "")
+                    highlight = step.get("highlight", False)
+                    prompt += f"- {expr}"
+                    if annotation:
+                        prompt += f"  // {annotation}"
+                    if highlight:
+                        prompt += " [HIGHLIGHT THIS STEP]"
+                    prompt += "\n"
+                else:
+                    prompt += f"- {key}: {step}\n"
+        elif isinstance(example_calculation, list):
+            for i, step in enumerate(example_calculation, 1):
+                prompt += f"- Step {i}: {step}\n"
+
+    # Add annotations with styling
+    if annotations:
+        prompt += "\nKEY ANNOTATIONS:\n"
+        for ann in annotations:
+            if isinstance(ann, dict):
+                text = ann.get("text", "")
+                ann_style = ann.get("style", "")
+                position = ann.get("position", "")
+                if text:
+                    prompt += f"- '{text}'"
+                    if ann_style:
+                        prompt += f" (style: {ann_style})"
+                    if position:
+                        prompt += f" placed {position}"
+                    prompt += "\n"
+            else:
+                prompt += f"- {ann}\n"
+
+    # Add precision reminder for geometric diagrams
+    has_geometric_specs = axis_range or formula or any(
+        'coordinate' in str(elem).lower() or
+        'point' in str(elem).lower() or
+        'slope' in str(elem).lower() or
+        'tangent' in str(elem).lower()
+        for elem in elements
+    )
+
+    if has_geometric_specs:
+        prompt += """
+GEOMETRIC PRECISION REQUIREMENTS:
+- Plot curves and lines with mathematical accuracy
+- Place labeled points at their EXACT coordinates
+- Draw slope triangles with correct rise/run ratios
+- Ensure tangent lines touch curves at exactly one point
+- Use consistent scale on both axes
+"""
 
     prompt += """
-REMEMBER: Labels should be 1-5 words MAX. Draw the concept, don't write about it.
+LABELING RULES:
+- Labels should be 1-5 words MAX
+- Use mathematical notation where appropriate
+- Draw the concept visually, don't write paragraphs about it
 """
     return prompt
 
