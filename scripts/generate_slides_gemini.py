@@ -498,6 +498,12 @@ STYLE: {style}
         for elem in elements
     )
 
+    # Check if tangent lines are involved (need special attention)
+    has_tangent = any(
+        'tangent' in str(elem).lower()
+        for elem in elements
+    ) or 'tangent' in name.lower() or 'tangent' in purpose.lower()
+
     if has_geometric_specs:
         prompt += """
 GEOMETRIC PRECISION REQUIREMENTS:
@@ -506,6 +512,18 @@ GEOMETRIC PRECISION REQUIREMENTS:
 - Draw slope triangles with correct rise/run ratios
 - Ensure tangent lines touch curves at exactly one point
 - Use consistent scale on both axes
+"""
+
+    # Add stronger tangent-specific instruction when tangent lines are involved
+    if has_tangent:
+        prompt += """
+CRITICAL TANGENT LINE REQUIREMENT:
+A tangent line TOUCHES the curve at exactly ONE point and does NOT cross or intersect the curve.
+- The tangent line must lie on ONE SIDE of the curve near the point of tangency
+- For a concave-up curve: tangent line is BELOW the curve (except at the touch point)
+- For a concave-down curve: tangent line is ABOVE the curve (except at the touch point)
+- A SECANT line crosses through the curve at TWO points (this is different from a tangent)
+- If showing both: secants cross the curve, but the tangent only touches it once
 """
 
     prompt += """
@@ -605,6 +623,24 @@ def build_slide_prompt(
     if verified_math_steps:
         verified_section = f"\n{verified_math_steps}\n"
 
+    # Check if tangent lines are involved (from narration or visual reference)
+    # This catches cases where visual_spec is None but content describes tangent lines
+    combined_text = f"{narration} {visual_ref}".lower()
+    has_tangent_content = 'tangent' in combined_text and ('line' in combined_text or 'slope' in combined_text)
+
+    # Build tangent instruction if needed
+    tangent_instruction = ""
+    if has_tangent_content:
+        tangent_instruction = """
+CRITICAL TANGENT LINE REQUIREMENT:
+A tangent line TOUCHES the curve at exactly ONE point and does NOT cross or intersect the curve.
+- The tangent line must lie on ONE SIDE of the curve near the point of tangency
+- For a concave-up curve: tangent line is BELOW the curve (except at the touch point)
+- For a concave-down curve: tangent line is ABOVE the curve (except at the touch point)
+- A SECANT line crosses through the curve at TWO points (this is different from a tangent)
+- If showing both: secants cross the curve, but the tangent only touches it once
+"""
+
     base_prompt = f"""{STYLE_PROMPT}
 {math_section}
 VIDEO CONTEXT:
@@ -622,7 +658,7 @@ CRITICAL RULES:
 - DO NOT write sentences or paragraphs - use SHORT LABELS only (1-5 words)
 - DO NOT repeat the narration as text - the viewer will HEAR it
 - FOCUS on diagrams, graphs, icons, and visual representations
-"""
+{tangent_instruction}"""
 
     if frame_type == "title":
         return base_prompt + """
