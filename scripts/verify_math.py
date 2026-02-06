@@ -2,7 +2,7 @@
 """
 Math Verification Script
 
-Verifies mathematical calculations in script using Claude extended thinking.
+Verifies mathematical calculations in script using Claude 4.6 adaptive thinking.
 Generates:
 1. Natural English narration for TTS (no symbols)
 2. Precise math notation for Gemini slides
@@ -154,7 +154,7 @@ def verify_frame(client: ClaudeClient, frame: Dict, verbose: bool = False) -> Di
         narration=narration,
         visual_context=visual_ref,
         frame_number=frame_num,
-        budget_tokens=10000
+        effort="high"
     )
 
     if verbose:

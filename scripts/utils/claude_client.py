@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude API Client for Aurea Dicta
-Wrapper for Anthropic Claude Opus 4.5 API calls
+Wrapper for Anthropic Claude Opus 4.6 API calls
 """
 
 import os
@@ -20,7 +20,7 @@ except ImportError:
 
 
 class ClaudeClient:
-    """Client for Claude Opus 4.5 API interactions"""
+    """Client for Claude Opus 4.6 API interactions"""
 
     def __init__(self, api_key: str = None):
         """
@@ -37,7 +37,7 @@ class ClaudeClient:
             )
 
         self.client = anthropic.Anthropic(api_key=self.api_key)
-        self.model = "claude-opus-4-5-20251101"
+        self.model = "claude-opus-4-6"
 
     def call_claude(
         self,
@@ -301,12 +301,12 @@ Respond with ONLY valid JSON."""
         narration: str,
         visual_context: str,
         frame_number: int = 0,
-        budget_tokens: int = 10000
+        effort: str = "high"
     ) -> dict:
         """
-        Verify mathematical content using extended thinking.
+        Verify mathematical content using adaptive thinking.
 
-        Uses Claude's extended thinking capability to carefully work through
+        Uses Claude 4.6's adaptive thinking capability to carefully work through
         mathematical calculations, then returns:
         - natural_narration: TTS-friendly version of the content
         - math_steps: Precise mathematical notation for Gemini slides
@@ -316,7 +316,7 @@ Respond with ONLY valid JSON."""
             narration: The original narration text with math content
             visual_context: Description of what the visual should show
             frame_number: Frame number for context
-            budget_tokens: Extended thinking budget (default 10000)
+            effort: Thinking effort level ("low", "medium", "high", "max")
 
         Returns:
             dict with natural_narration, math_steps, verification_status, etc.
@@ -375,22 +375,20 @@ Important:
 - Math steps should be thorough enough for a student to follow along"""
 
         try:
-            # Use extended thinking for thorough verification
+            # Use adaptive thinking for thorough verification (Claude 4.6)
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=16000,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens
-                },
+                thinking={"type": "adaptive"},
+                output_config={"effort": effort},
                 messages=[{"role": "user", "content": prompt}],
                 system=system
             )
 
-            # Extract the text response (extended thinking puts result in content blocks)
+            # Extract the text response (adaptive thinking may produce multiple text blocks)
             result_text = ""
             for block in response.content:
-                if hasattr(block, 'text'):
+                if hasattr(block, 'text') and block.text.strip():
                     result_text = block.text
                     break
 
