@@ -269,11 +269,25 @@ def format_word_transcript(aligned_words: List[Dict]) -> str:
 
 
 GRAPH_KEYWORDS = [
-    "curve", "axes", "plot", "tangent", "shad", "region",
-    "peak", "valley", "rising", "falling", "concav",
+    # Explicit graph words
+    "graph", "curve", "axes", "plot", "tangent", "shad", "region",
+    # Shape/behavior words
+    "peak", "valley", "rising", "falling", "concav", "parabola", "hyperbola",
+    "asymptote", "hole", "open circle", "closed circle",
+    # Specific visual elements
+    "slope", "intercept", "intersection", "secant", "normal line",
+    "area under", "area between", "discontinu",
+    # Comparison/side-by-side visuals
+    "left panel", "right panel", "side by side", "comparison",
 ]
-NUMBER_LINE_KEYWORDS = [
+BOTTOM_ZONE_KEYWORDS = [
+    # Number lines and sign analysis
     "number line", "sign chart", "sign analysis", "test point",
+    # Flowcharts and process diagrams
+    "flowchart", "flow chart", "process chart", "decision tree",
+    "strategy", "complete strategy", "step-by-step",
+    # Summary diagrams
+    "summary diagram", "overview diagram", "classification",
 ]
 
 
@@ -282,24 +296,24 @@ def detect_layout(visual_desc: str, narration: str, math_steps: List[Dict]) -> s
     Detect which layout template to recommend based on frame content.
 
     Graph detection uses visual_desc only (describes what to draw).
-    Number line detection uses visual_desc + narration.
+    Bottom zone detection uses visual_desc + narration.
 
-    Returns 'A' (full whiteboard), 'B' (split screen), or 'C' (steps + number line).
+    Returns 'A' (full whiteboard), 'B' (split screen), or 'C' (steps + visual summary below).
     """
     visual_lower = visual_desc.lower()
     narration_lower = narration.lower()
 
     has_graph = any(kw in visual_lower for kw in GRAPH_KEYWORDS)
-    has_number_line = any(
+    has_bottom_zone = any(
         kw in visual_lower or kw in narration_lower
-        for kw in NUMBER_LINE_KEYWORDS
+        for kw in BOTTOM_ZONE_KEYWORDS
     )
 
-    if has_graph and not has_number_line:
+    if has_graph and not has_bottom_zone:
         return 'B'
-    if has_number_line and not has_graph:
+    if has_bottom_zone and not has_graph:
         return 'C'
-    if has_graph and has_number_line:
+    if has_graph and has_bottom_zone:
         # Both — prefer split screen (graph is more spatially demanding)
         return 'B'
     return 'A'
@@ -308,7 +322,7 @@ def detect_layout(visual_desc: str, narration: str, math_steps: List[Dict]) -> s
 LAYOUT_DESCRIPTIONS = {
     'A': "Layout A: Full Whiteboard — pure algebraic derivation, no graphs or number lines. Use the full-width add_step() helper.",
     'B': "Layout B: Split Screen — graph on LEFT (centered x=-3.3), steps on RIGHT (centered x=3.5). NEVER put graph above steps. FadeOut graph completely when no longer referenced.",
-    'C': "Layout C: Steps Above + Number Line Below — algebraic steps in top zone (SCROLL_BOTTOM=-0.8), number line pinned at bottom (y=-2.5).",
+    'C': "Layout C: Steps Above + Visual Summary Below — algebraic steps in top zone (SCROLL_BOTTOM=-0.8), bottom zone (y=-1.3 to -3.5) for number line, flowchart, process chart, or decision tree. Build the bottom element progressively in sync with the narration. Add a faint separator line at y=-1.1.",
 }
 
 
@@ -362,7 +376,8 @@ REQUIREMENTS:
 6. Use the color scheme from the system prompt (dark bg, blue math, orange highlights, green answer)
 7. The final step/answer should remain visible until the end
 8. Use the `add_step()` whiteboard helper from the system prompt for sequential derivation steps
-9. Return ONLY the Python code, no explanation
+9. **Graph drawing**: If the VISUAL DESCRIPTION mentions specific functions, graphs, curves, holes, asymptotes, or any plotted shapes, you MUST draw them on axes in the left region (Layout B). Plot the actual functions described — don't skip them in favor of pure algebra. The graph is the visual payoff; the algebraic steps support it.
+10. Return ONLY the Python code, no explanation
 
 Return the complete Python code starting with `from manim import *`."""
 

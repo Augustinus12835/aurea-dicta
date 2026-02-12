@@ -292,15 +292,22 @@ Add colored areas, tangent lines, labels directly to the graph in the left regio
 
 ---
 
-### Layout C: Steps Above + Number Line Below
+### Layout C: Steps Above + Visual Summary Below
 
-Use when the frame ends with a **number line**, **sign chart**, or **interval visualization** — but the main derivation is algebraic.
+Use when the frame involves a **number line**, **sign chart**, **flowchart**, **process chart**, **decision tree**, or any visual summary that complements the algebraic derivation above it.
 
 **Screen divided vertically:**
 - **Top zone** (y: 2.3 to −0.8): Steps via `add_step()`, scrolls normally
-- **Bottom zone** (y: −1.5 to −3.5): Number line, pinned in place
+- **Bottom zone** (y: −1.3 to −3.5): Visual element pinned in place, separated by a faint line
 
-The `SCROLL_BOTTOM` is raised to `−0.8` so steps never overlap the number line zone.
+The `SCROLL_BOTTOM` is raised to `−0.8` so steps never overlap the bottom zone.
+
+**Bottom zone element types:**
+- **Number line**: `NumberLine` with dots, sign labels, interval markers
+- **Flowchart / process chart**: `RoundedRectangle` boxes connected by `Arrow`s, built progressively
+- **Decision tree**: Branching boxes with labeled arrows
+
+#### Example: Number Line
 
 ```python
 from manim import *
@@ -310,6 +317,7 @@ BLUE = "#3B82F6"
 ORANGE = "#F97316"
 GREEN = "#22C55E"
 SLATE = "#94A3B8"
+RED_C = "#EF4444"
 DIM = 0.35
 
 class MathAnimation(Scene):
@@ -324,7 +332,7 @@ class MathAnimation(Scene):
         dimmed = set()
         BOARD_TOP = 2.3
         STEP_BUFF = 0.35
-        SCROLL_BOTTOM = -0.8    # Raised — number line lives below
+        SCROLL_BOTTOM = -0.8    # Raised — visual summary lives below
 
         def add_step(tex, label_text, run_time=1.5):
             step = MathTex(tex, color=BLUE).scale(0.85)
@@ -373,26 +381,20 @@ class MathAnimation(Scene):
         # ══════════════════════════════════════
         # BOTTOM ZONE: Number line (y: -1.5 to -3.5)
         # ══════════════════════════════════════
-        # Show the number line when the narration reaches interval analysis
+        sep_line = Line(LEFT * 7, RIGHT * 7, color=SLATE, stroke_width=0.8, stroke_opacity=0.4)
+        sep_line.move_to(UP * -1.1)
+        self.play(FadeIn(sep_line), run_time=0.3)
 
         nl = NumberLine(
-            x_range=[-3, 3, 1],
-            length=10,
-            include_numbers=True,
-            color=WHITE,
-            font_size=24
+            x_range=[-3, 3, 1], length=10, include_numbers=True,
+            color=WHITE, font_size=24
         ).shift(DOWN * 2.5)
 
-        # Critical point markers
         dot1 = Circle(radius=0.1, color=ORANGE, stroke_width=3).move_to(nl.n2p(-1))
         dot2 = Circle(radius=0.1, color=ORANGE, stroke_width=3).move_to(nl.n2p(1))
-        cp_lab1 = MathTex("x=-1", color=ORANGE).scale(0.55).next_to(dot1, UP, buff=0.15)
-        cp_lab2 = MathTex("x=1", color=ORANGE).scale(0.55).next_to(dot2, UP, buff=0.15)
 
         self.play(Create(nl), run_time=1.0)
-        elapsed += 1.0
-        self.play(Create(dot1), Create(dot2), FadeIn(cp_lab1), FadeIn(cp_lab2), run_time=0.8)
-        elapsed += 0.8
+        self.play(Create(dot1), Create(dot2), run_time=0.8)
 
         # Sign labels below number line
         plus1 = MathTex("+", color=GREEN).scale(0.7).next_to(nl.n2p(-2), DOWN, buff=0.3)
@@ -406,13 +408,82 @@ class MathAnimation(Scene):
         self.wait(w)
 ```
 
+#### Example: Flowchart / Process Chart
+
+```python
+        # ══════════════════════════════════════
+        # BOTTOM ZONE: Flowchart (y: -1.3 to -3.5)
+        # ══════════════════════════════════════
+        sep_line = Line(LEFT * 7, RIGHT * 7, color=SLATE, stroke_width=0.8, stroke_opacity=0.4)
+        sep_line.move_to(UP * -1.1)
+
+        FLOW_Y_TOP = -1.5
+        FLOW_Y_BOT = -3.2
+
+        def make_box(text_str, color, width=2.2, height=0.55, font_size=16):
+            box = RoundedRectangle(corner_radius=0.1, width=width, height=height,
+                                    color=color, stroke_width=2)
+            txt = Text(text_str, font_size=font_size, color=color, font="Inter")
+            txt.move_to(box.get_center())
+            return VGroup(box, txt)
+
+        def arrow_between(a, b, color=WHITE):
+            return Arrow(a.get_right(), b.get_left(), buff=0.08, color=color,
+                        stroke_width=2, max_tip_length_to_length_ratio=0.15)
+
+        # Build boxes — position them across the bottom zone
+        box_start = make_box("Step 1", ORANGE, width=1.8, height=0.5, font_size=15)
+        box_start.move_to(LEFT * 5.0 + UP * (FLOW_Y_TOP + FLOW_Y_BOT) / 2)
+
+        box_mid = make_box("Step 2", BLUE, width=2.0, height=0.5, font_size=15)
+        box_mid.move_to(LEFT * 1.5 + UP * (FLOW_Y_TOP + FLOW_Y_BOT) / 2)
+
+        box_end = make_box("Result", GREEN, width=2.0, height=0.5, font_size=15)
+        box_end.move_to(RIGHT * 2.0 + UP * (FLOW_Y_TOP + FLOW_Y_BOT) / 2)
+
+        # Progressive reveal: show each box + arrow as the narration reaches it
+        self.play(FadeIn(sep_line), run_time=0.3)
+        self.play(FadeIn(box_start), run_time=0.6)
+        # ... later, synced to narration:
+        arr1 = arrow_between(box_start, box_mid, ORANGE)
+        self.play(Create(arr1), FadeIn(box_mid), run_time=0.7)
+        # ... and so on for each stage
+
+        # For branching (decision trees), use two rows:
+        # box_yes.move_to(RIGHT * x + UP * FLOW_Y_TOP)   # top branch
+        # box_no.move_to(RIGHT * x + UP * FLOW_Y_BOT)    # bottom branch
+```
+
+**Key principles for the bottom zone:**
+1. **Progressive reveal**: Build the visual element step-by-step in sync with the narration, not all at once.
+2. **Separator line**: Always add a faint horizontal line at y = −1.1 to visually divide the zones.
+3. **The bottom zone is permanent**: Once revealed, elements stay visible for the rest of the animation.
+4. **Font sizes**: Use 15-16px for box text, keep boxes compact (width 1.8-2.5, height 0.5).
+
+---
+
+## Graph Drawing (Layout B)
+
+When Layout B is selected, the VISUAL DESCRIPTION will describe specific functions, curves, or graphical elements. You MUST actually plot them — don't reduce the animation to pure algebra.
+
+**What to draw on the left-side axes:**
+- **Named functions**: If the visual says "y = x + 2" or "y = 1/(x-2)", plot those functions using `axes.plot(lambda x: ...)`.
+- **Holes**: Use an open circle — `Circle(radius=0.1, color=..., stroke_width=2, fill_opacity=0).move_to(axes.c2p(x, y))`.
+- **Asymptotes**: Use a `DashedLine` at the x-value, spanning the y-range of the axes.
+- **Labeled points**: Use `Dot` + `MathTex` label positioned via `axes.c2p()`.
+- **Shaded regions**: Use `axes.get_area(curve, x_range=[a, b], color=..., opacity=0.3)`.
+- **Tangent/secant lines**: Plot as a short line segment or use `axes.plot()` for the tangent function.
+- **Multiple graphs**: If the visual describes a comparison (e.g., "left panel" vs "right panel"), stack two smaller axes vertically in the left region (see "Two graphs on the left" in Layout B).
+
+**Timing**: Build the graph progressively — show axes first, then animate curves with `Create()`, then add annotations (dots, labels, asymptotes) as the narration mentions them. The graph should feel like it's being drawn in sync with the explanation.
+
 ---
 
 ## Layout Rules (MUST follow)
 
 1. **NEVER place a graph above and steps below.** This layout inevitably causes overlap. Always use Layout B (side-by-side) when graphs are involved.
 2. **Graphs are temporary.** When the narration moves past the graph (e.g., to a summary, conclusion, or different topic), `FadeOut(graph_group)` completely. Do NOT dim graphs — remove them.
-3. **Number lines are permanent.** Once shown, a number line stays on screen for the rest of the animation. Pin it in the bottom zone.
+3. **Bottom zone elements are permanent.** Once shown, number lines, flowcharts, and other bottom-zone visuals stay on screen for the rest of the animation. Pin them in the bottom zone.
 4. **One layout per animation.** Do not switch between layouts mid-animation. Pick the right one at the start.
 5. **`add_step()` is mandatory** for all sequential math derivations. Never manually position steps with `.move_to()`.
 6. **Group all graph elements** into a single `VGroup` called `graph_group` for easy FadeOut. Include: axes, axis labels, curves, dots, tangent lines, shaded areas, text annotations on the graph.
