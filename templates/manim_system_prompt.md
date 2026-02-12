@@ -48,7 +48,7 @@ If Step 1 is "Addition Property of Limits", you would start its animation at ~0.
 - Use `self.wait()` to pad between steps, calculated as: `target_time - elapsed`
 - Track elapsed time with a variable: `elapsed = 0; w = target - elapsed; self.wait(w); elapsed += w`
 - The total animation must fill `total_duration` exactly
-- If a step's animation (Write, FadeIn) takes 1-2s, start it 1-2s BEFORE the narrator reaches that point, so the visual is ready when the words are spoken
+- **Visual-before-voice rule**: Every step's Write/FadeIn animation MUST complete ~0.5s BEFORE the narrator says the key phrase for that step. Since Write() takes ~1.5s, start the animation 2s before the anchor word. Be consistent — the same 0.5s lead on every step so the pacing feels uniform
 
 ---
 

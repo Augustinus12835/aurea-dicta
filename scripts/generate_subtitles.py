@@ -18,6 +18,7 @@ Output:
 import os
 import sys
 import json
+import math
 import argparse
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
@@ -285,13 +286,21 @@ def generate_subtitles_from_corrected_timestamps(frames: List[FrameData], output
     return len(subtitle_entries)
 
 
-def calculate_actual_frame_times(frames: List[FrameData]) -> None:
-    """Calculate actual frame start/end times based on measured audio durations"""
+def calculate_actual_frame_times(frames: List[FrameData], fps: int = 30) -> None:
+    """Calculate actual frame start/end times matching the compiled video timeline.
+
+    The video compiler uses paired concat (v=1:a=1), where each segment's
+    duration is max(video_quantized_dur, audio_dur). Since video quantizes
+    to frame boundaries (ceil), each segment is ceil(audio_dur * fps) / fps.
+    Subtitle offsets must match this to stay in sync.
+    """
     current_time = 0.0
 
     for frame in frames:
         frame.actual_start_time = current_time
-        frame.actual_end_time = current_time + frame.actual_audio_duration
+        # Match paired concat: video quantizes up to frame boundary
+        segment_dur = math.ceil(frame.actual_audio_duration * fps) / fps
+        frame.actual_end_time = current_time + segment_dur
         current_time = frame.actual_end_time
 
 

@@ -352,7 +352,9 @@ def build_ffmpeg_command(video_folder: str, frames: List[FrameData],
     # Add visual inputs (static PNGs looped, animated .mp4s used directly)
     for frame in frames:
         if frame.is_animated:
-            cmd.extend(['-i', frame.image_path])
+            # Clamp animated mp4 to audio duration to prevent cumulative drift
+            # (Manim clips are often slightly longer than the audio)
+            cmd.extend(['-t', str(frame.actual_audio_duration), '-i', frame.image_path])
         else:
             cmd.extend([
                 '-loop', '1',
@@ -390,15 +392,16 @@ def build_ffmpeg_command(video_folder: str, frames: List[FrameData],
             )
         filter_parts.append(filter_str)
 
-    # Concatenate video streams
-    video_concat = ''.join([f"[v{i}]" for i in range(num_frames)])
-    video_concat += f"concat=n={num_frames}:v=1:a=0[video]"
-    filter_parts.append(video_concat)
+    # Reset audio timestamps (MP3 encoder delay can shift PTS)
+    for i in range(num_frames):
+        filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
 
-    # Concatenate audio streams - synchronized with video (no delay)
-    audio_concat = ''.join([f"[{i}:a]" for i in range(num_frames)])
-    audio_concat += f"concat=n={num_frames}:v=0:a=1[audio]"
-    filter_parts.append(audio_concat)
+    # Paired concat: each segment's video+audio are treated as a unit.
+    # Quantization errors (video snaps to 1/30s boundaries) reset at each
+    # segment boundary instead of accumulating across all frames.
+    paired_concat = ''.join([f"[v{i}][a{i}]" for i in range(num_frames)])
+    paired_concat += f"concat=n={num_frames}:v=1:a=1[video][audio]"
+    filter_parts.append(paired_concat)
 
     # NOTE: Subtitles are NOT burned-in
     # Separate subtitles.srt file is generated for students to toggle on/off
@@ -455,7 +458,8 @@ def build_ffmpeg_command_with_segments(video_folder: str, segments: List[MergedS
     # Add visual inputs (static PNGs looped, animated .mp4s used directly)
     for seg in segments:
         if getattr(seg.frames[0], 'is_animated', False):
-            cmd.extend(['-i', seg.image_path])
+            # Clamp animated mp4 to audio duration to prevent cumulative drift
+            cmd.extend(['-t', str(seg.total_duration), '-i', seg.image_path])
         else:
             cmd.extend([
                 '-loop', '1',
@@ -490,15 +494,15 @@ def build_ffmpeg_command_with_segments(video_folder: str, segments: List[MergedS
             )
         filter_parts.append(filter_str)
 
-    # Concatenate video streams
-    video_concat = ''.join([f"[v{i}]" for i in range(num_segments)])
-    video_concat += f"concat=n={num_segments}:v=1:a=0[video]"
-    filter_parts.append(video_concat)
+    # Reset audio timestamps (MP3 encoder delay can shift PTS)
+    for i in range(num_segments):
+        filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
 
-    # Concatenate audio streams
-    audio_concat = ''.join([f"[{i}:a]" for i in range(num_segments)])
-    audio_concat += f"concat=n={num_segments}:v=0:a=1[audio]"
-    filter_parts.append(audio_concat)
+    # Paired concat: each segment's video+audio are treated as a unit.
+    # Quantization errors reset at each segment boundary.
+    paired_concat = ''.join([f"[v{i}][a{i}]" for i in range(num_segments)])
+    paired_concat += f"concat=n={num_segments}:v=1:a=1[video][audio]"
+    filter_parts.append(paired_concat)
 
     # Join all filter parts
     filter_complex = ';'.join(filter_parts)
