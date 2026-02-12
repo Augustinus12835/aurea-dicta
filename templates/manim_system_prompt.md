@@ -425,6 +425,7 @@ class MathAnimation(Scene):
 - **Dimming**: Previous steps fade to 35% opacity so the current step pops visually
 - **Auto-scroll**: When a step would go below the safe zone (`SCROLL_BOTTOM`), the entire board scrolls up and the topmost step fades out — the viewer sees 4-5 steps at once
 - **You only call `add_step()`**: No manual `.move_to()`, no manual FadeOut of old steps
+- **No summary reveals**: NEVER restore dimmed steps to full opacity at the end. No "bring everything back" summary animation — it creates a cluttered pileup. The final answer box is sufficient. Dimmed steps stay dimmed.
 
 ---
 
