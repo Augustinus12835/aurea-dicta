@@ -45,7 +45,7 @@ REVIEW_CHECKPOINTS = {
 WEEK_STEPS = ["transcribe", "clean", "segment"]
 
 # Video-level steps (run per video)
-VIDEO_STEPS = ["brief", "charts", "script", "verify_math", "frames", "tts", "compile", "study_guide"]
+VIDEO_STEPS = ["brief", "charts", "script", "verify_math", "frames", "tts", "animate", "compile", "study_guide"]
 
 
 # =============================================================================
@@ -320,6 +320,17 @@ class VideoState:
         return StepStatus.PENDING
 
     @property
+    def animate_status(self) -> StepStatus:
+        # Animation is optional — skip if no math verification
+        if not self.math_verification_exists:
+            return StepStatus.SKIPPED
+        # Check for .animate_done marker (written by generate_math_animation.py)
+        animate_marker = self.video_dir / "frames" / ".animate_done"
+        if animate_marker.exists():
+            return StepStatus.COMPLETE
+        return StepStatus.PENDING
+
+    @property
     def compile_status(self) -> StepStatus:
         return StepStatus.COMPLETE if self.video_exists else StepStatus.PENDING
 
@@ -345,6 +356,9 @@ class VideoState:
 
         if self.tts_status in (StepStatus.PENDING, StepStatus.PARTIAL):
             return "tts"
+
+        if self.animate_status == StepStatus.PENDING:
+            return "animate"
 
         if not self.video_exists:
             return "compile"
@@ -609,6 +623,18 @@ def print_video_status(state: VideoState, verbose: bool = True):
     else:
         print(f"  {status_symbol(state.tts_status)} audio/")
 
+    # Animation status
+    if state.animate_status == StepStatus.SKIPPED:
+        print(f"  {status_symbol(state.animate_status)} animate (no math)")
+    else:
+        # Count animated .mp4 frames
+        frames_dir = state.video_dir / "frames"
+        mp4_count = len(list(frames_dir.glob("frame_*.mp4"))) if frames_dir.exists() else 0
+        if mp4_count > 0:
+            print(f"  {status_symbol(state.animate_status)} animate ({mp4_count} animated frames)")
+        else:
+            print(f"  {status_symbol(state.animate_status)} animate")
+
     print(f"  {status_symbol(state.compile_status)} final_video.mp4")
 
     # Study guides (only show if video is complete)
@@ -804,6 +830,21 @@ def run_video_step(step: str, video_dir: Path, lecture_dir: Path) -> bool:
             print(f"{Colors.RED}  Error: script.md not found{Colors.RESET}")
             return False
         return run_script("generate_tts_elevenlabs.py", [str(script_path)])
+
+    elif step == "animate":
+        # Skip if no math verification data
+        mv_path = video_dir / "math_verification.json"
+        if not mv_path.exists():
+            print(f"  {Colors.DIM}No math_verification.json, skipping animation...{Colors.RESET}")
+            return True
+        # Check requires_math flag from visual_specs
+        specs_path = video_dir / "visual_specs.json"
+        if specs_path.exists():
+            requires_math = check_requires_math(specs_path)
+            if not requires_math:
+                print(f"  {Colors.DIM}Not a math video, skipping animation...{Colors.RESET}")
+                return True
+        return run_script("generate_math_animation.py", [str(video_dir)])
 
     elif step == "compile":
         return run_script("compile_video.py", [str(video_dir)])
@@ -1029,6 +1070,8 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
                 continue
             if step == "tts" and video_state.tts_status == StepStatus.COMPLETE:
                 continue
+            if step == "animate" and video_state.animate_status in (StepStatus.COMPLETE, StepStatus.SKIPPED):
+                continue
             if step == "compile" and video_state.compile_status == StepStatus.COMPLETE:
                 continue
 
@@ -1041,6 +1084,7 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
                  "verify_math": "Verify math calculations",
                  "frames": "Generate slide frames",
                  "tts": "Generate TTS audio",
+                 "animate": "Generate math animations",
                  "compile": "Compile final video",
                  "study_guide": "Generate study guide PDFs"}[step]
             )
@@ -1132,7 +1176,8 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
     # Determine starting step
     next_step = video_state.next_step()
 
-    if next_step is None:
+    # Only return early if complete AND not forcing from a specific step
+    if next_step is None and from_step is None:
         if video_state.video_exists:
             print(f"{Colors.GREEN}✓ Video already complete!{Colors.RESET}")
             return
@@ -1164,6 +1209,8 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
                 continue
             if step == "tts" and video_state.tts_status == StepStatus.COMPLETE:
                 continue
+            if step == "animate" and video_state.animate_status in (StepStatus.COMPLETE, StepStatus.SKIPPED):
+                continue
             if step == "compile" and video_state.compile_status == StepStatus.COMPLETE:
                 continue
 
@@ -1175,6 +1222,7 @@ def run_single_video(video_path: str, review_mode: bool = True, from_step: str =
              "verify_math": "Verify math calculations",
              "frames": "Generate slide frames",
              "tts": "Generate TTS audio",
+             "animate": "Generate math animations",
              "compile": "Compile final video",
              "study_guide": "Generate study guide PDFs"}[step]
         )
@@ -1267,8 +1315,13 @@ def show_status(path: str, video_num: int = None):
                 else:
                     status = f"{Colors.RED}✗ Missing content{Colors.RESET}"
 
+                # Check for animated frames
+                frames_dir = video_dir / "frames"
+                mp4_count = len(list(frames_dir.glob("frame_*.mp4"))) if frames_dir.exists() else 0
+                anim_tag = f" {Colors.CYAN}[{mp4_count} animated]{Colors.RESET}" if mp4_count > 0 else ""
+
                 title = video_state.video_title[:40] if video_state.video_title else ""
-                print(f"  {video_dir.name}: {status} {Colors.DIM}{title}{Colors.RESET}")
+                print(f"  {video_dir.name}: {status}{anim_tag} {Colors.DIM}{title}{Colors.RESET}")
 
 
 # =============================================================================

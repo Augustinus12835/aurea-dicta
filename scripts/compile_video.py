@@ -63,6 +63,7 @@ class FrameData:
         self.actual_start_time = None  # Actual video timestamp (calculated)
         self.actual_end_time = None    # Actual video timestamp (calculated)
         self.continuation_of = None  # If this frame continues a previous frame's visual
+        self.is_animated = False  # True if .mp4 (Manim animation) exists for this frame
 
 
 class MergedSegment:
@@ -291,14 +292,19 @@ def validate_input_files(video_folder: str, frames: List[FrameData]) -> Tuple[in
     if not os.path.exists(audio_dir):
         raise FrameMismatchError(f"Audio directory not found: {audio_dir}")
 
-    # Validate each frame has matching image and audio
+    # Validate each frame has a visual (.mp4 preferred, .png fallback) and audio
     for frame in frames:
-        # Check image
-        image_name = f"frame_{frame.number}.png"
-        image_path = os.path.join(frames_dir, image_name)
-        if not os.path.exists(image_path):
-            raise FrameMismatchError(f"Missing image: {image_name}")
-        frame.image_path = image_path
+        mp4_path = os.path.join(frames_dir, f"frame_{frame.number}.mp4")
+        png_path = os.path.join(frames_dir, f"frame_{frame.number}.png")
+
+        if os.path.exists(mp4_path):
+            frame.image_path = mp4_path
+            frame.is_animated = True
+        elif os.path.exists(png_path):
+            frame.image_path = png_path
+            frame.is_animated = False
+        else:
+            raise FrameMismatchError(f"Missing visual: frame_{frame.number}.png or .mp4")
 
         # Check audio and get actual duration
         audio_name = f"frame_{frame.number}.mp3"
@@ -314,10 +320,15 @@ def validate_input_files(video_folder: str, frames: List[FrameData]) -> Tuple[in
     calculate_actual_frame_times(frames)
 
     num_frames = len(frames)
-    num_images = len([f for f in os.listdir(frames_dir) if f.endswith('.png')])
+    num_visuals = len([f for f in os.listdir(frames_dir)
+                       if f.startswith('frame_') and (f.endswith('.png') or f.endswith('.mp4'))])
     num_audio = len([f for f in os.listdir(audio_dir) if f.endswith('.mp3')])
 
-    return num_frames, num_images, num_audio
+    animated_count = sum(1 for f in frames if f.is_animated)
+    if animated_count:
+        print(f"      {animated_count} animated + {len(frames) - animated_count} static frames")
+
+    return num_frames, num_visuals, num_audio
 
 
 def build_ffmpeg_command(video_folder: str, frames: List[FrameData],
@@ -338,35 +349,45 @@ def build_ffmpeg_command(video_folder: str, frames: List[FrameData],
     for frame in frames:
         cmd.extend(['-i', frame.audio_path])
 
-    # Add image inputs using ACTUAL audio duration
+    # Add visual inputs (static PNGs looped, animated .mp4s used directly)
     for frame in frames:
-        # Use actual measured audio duration
-        cmd.extend([
-            '-loop', '1',
-            '-t', str(frame.actual_audio_duration),
-            '-i', frame.image_path
-        ])
+        if frame.is_animated:
+            cmd.extend(['-i', frame.image_path])
+        else:
+            cmd.extend([
+                '-loop', '1',
+                '-t', str(frame.actual_audio_duration),
+                '-i', frame.image_path
+            ])
 
     # Build complex filter graph
     filter_parts = []
 
-    # Process each image: scale, set frame rate, add fade transitions
+    # Process each visual: scale, set frame rate, add fade transitions
     num_frames = len(frames)
     fade_duration = 0.5  # 0.5 second crossfade
 
     for i, frame in enumerate(frames):
-        input_idx = num_frames + i  # Images start after audio files
+        input_idx = num_frames + i  # Visuals start after audio files
 
         # Calculate fade timings based on actual audio duration
         fade_out_start = frame.actual_audio_duration - fade_duration
 
-        # Scale, set fps, and add fades
-        filter_str = (
-            f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
-            f"fps=30,"
-            f"fade=t=in:st=0:d={fade_duration},"
-            f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
-        )
+        if frame.is_animated:
+            # Animated clip: already 1920x1080@30fps from Manim, just add fades
+            filter_str = (
+                f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
+                f"fade=t=in:st=0:d={fade_duration},"
+                f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
+            )
+        else:
+            # Static image: scale, set fps, and add fades
+            filter_str = (
+                f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
+                f"fps=30,"
+                f"fade=t=in:st=0:d={fade_duration},"
+                f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
+            )
         filter_parts.append(filter_str)
 
     # Concatenate video streams
@@ -431,13 +452,16 @@ def build_ffmpeg_command_with_segments(video_folder: str, segments: List[MergedS
     for seg in segments:
         cmd.extend(['-i', seg.merged_audio_path])
 
-    # Add image inputs using segment's total duration
+    # Add visual inputs (static PNGs looped, animated .mp4s used directly)
     for seg in segments:
-        cmd.extend([
-            '-loop', '1',
-            '-t', str(seg.total_duration),
-            '-i', seg.image_path
-        ])
+        if getattr(seg.frames[0], 'is_animated', False):
+            cmd.extend(['-i', seg.image_path])
+        else:
+            cmd.extend([
+                '-loop', '1',
+                '-t', str(seg.total_duration),
+                '-i', seg.image_path
+            ])
 
     # Build complex filter graph
     filter_parts = []
@@ -446,18 +470,24 @@ def build_ffmpeg_command_with_segments(video_folder: str, segments: List[MergedS
     fade_duration = 0.5  # 0.5 second crossfade
 
     for i, seg in enumerate(segments):
-        input_idx = num_segments + i  # Images start after audio files
+        input_idx = num_segments + i  # Visuals start after audio files
 
         # Calculate fade timings based on segment's total duration
         fade_out_start = seg.total_duration - fade_duration
 
-        # Scale, set fps, and add fades
-        filter_str = (
-            f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
-            f"fps=30,"
-            f"fade=t=in:st=0:d={fade_duration},"
-            f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
-        )
+        if getattr(seg.frames[0], 'is_animated', False):
+            filter_str = (
+                f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
+                f"fade=t=in:st=0:d={fade_duration},"
+                f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
+            )
+        else:
+            filter_str = (
+                f"[{input_idx}:v]scale=1920:1080:flags=lanczos,"
+                f"fps=30,"
+                f"fade=t=in:st=0:d={fade_duration},"
+                f"fade=t=out:st={fade_out_start}:d={fade_duration}[v{i}]"
+            )
         filter_parts.append(filter_str)
 
     # Concatenate video streams
@@ -725,8 +755,8 @@ def compile_video(video_folder: str) -> str:
 
         # Step 2: Validate input files and measure audio durations
         print("\n[2/6] Validating input files and calculating actual frame times...")
-        num_frames, num_images, num_audio = validate_input_files(video_folder, frames)
-        print(f"\n      Found {num_images} frame images")
+        num_frames, num_visuals, num_audio = validate_input_files(video_folder, frames)
+        print(f"\n      Found {num_visuals} frame visuals (png/mp4)")
         print(f"      Found {num_audio} audio files")
 
         # Show actual vs script duration
@@ -734,10 +764,10 @@ def compile_video(video_folder: str) -> str:
         total_script_duration = frames[-1].end_time
         print(f"      Total audio duration: {total_audio_duration:.1f}s (script estimate: {total_script_duration:.0f}s)")
 
-        if num_frames != num_images or num_frames != num_audio:
+        if num_frames != num_audio:
             raise FrameMismatchError(
                 f"Mismatch: {num_frames} script frames, "
-                f"{num_images} images, {num_audio} audio files"
+                f"{num_visuals} visuals, {num_audio} audio files"
             )
 
         # Step 3: Merge continuation frames (same visual, no jarring transitions)
