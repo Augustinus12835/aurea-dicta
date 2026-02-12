@@ -31,6 +31,9 @@ elevenlabs>=1.0.0         # ElevenLabs TTS (voice cloning support)
 # YouTube transcript fetching
 youtube-transcript-api>=1.0.0  # Fetch captions from YouTube videos
 
+# Math animation
+manim>=0.19.0                    # Manim Community Edition (animated math walkthroughs)
+
 # PDF generation
 reportlab>=4.0.0          # PDF study guide generation
 pillow>=9.0.0             # Image handling for PDFs
@@ -41,3 +44,5 @@ certifi>=2023.0.0
 # Note: The following system-level dependencies are also required:
 # - ffmpeg/ffprobe: Video compilation (install via: sudo apt install ffmpeg)
 # - poppler-utils: PDF extraction (install via: sudo apt install poppler-utils)
+# - LaTeX (for Manim math rendering):
+#     sudo apt install texlive-latex-extra texlive-fonts-extra texlive-science cm-super dvisvgm libpango1.0-dev
