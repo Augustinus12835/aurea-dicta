@@ -101,7 +101,7 @@ class MathAnimation(Scene):
             if grp.get_bottom()[1] < SCROLL_BOTTOM and len(board) > 0:
                 overflow = SCROLL_BOTTOM - grp.get_bottom()[1]
                 shift_up = overflow + 0.3
-                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > 3.8]
+                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > BOARD_TOP + 0.5]
                 self.play(board.animate.shift(UP * shift_up),
                           *[FadeOut(ft) for ft in fade_targets], run_time=0.6)
                 for ft in fade_targets:
@@ -231,7 +231,7 @@ class MathAnimation(Scene):
             if grp.get_bottom()[1] < SCROLL_BOTTOM and len(board) > 0:
                 overflow = SCROLL_BOTTOM - grp.get_bottom()[1]
                 shift_up = overflow + 0.3
-                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > 3.8]
+                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > BOARD_TOP + 0.5]
                 self.play(board.animate.shift(UP * shift_up),
                           *[FadeOut(ft) for ft in fade_targets], run_time=0.6)
                 for ft in fade_targets:
@@ -341,7 +341,7 @@ class MathAnimation(Scene):
             if grp.get_bottom()[1] < SCROLL_BOTTOM and len(board) > 0:
                 overflow = SCROLL_BOTTOM - grp.get_bottom()[1]
                 shift_up = overflow + 0.3
-                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > 3.8]
+                fade_targets = [g for g in list(board) if g.get_top()[1] + shift_up > BOARD_TOP + 0.5]
                 self.play(board.animate.shift(UP * shift_up),
                           *[FadeOut(ft) for ft in fade_targets], run_time=0.6)
                 for ft in fade_targets:

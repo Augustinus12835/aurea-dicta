@@ -118,12 +118,7 @@ def get_qualifying_frames(video_folder: str, specific_frame: Optional[int] = Non
     return sorted(qualifying)
 
 
-ANIMATION_DURATION_THRESHOLD = 60  # seconds — primary selection knob
-CONTAGION_DURATION_THRESHOLD = 25  # seconds — lower bar for adjacent frames
-NEW_PROBLEM_PHRASES = [
-    "consider", "new problem", "new example", "let's try a different",
-    "here's another", "next example", "moving on"
-]
+ANIMATION_DURATION_THRESHOLD = 60  # seconds — only animate frames >= this
 
 
 def select_frames_for_animation(
@@ -132,10 +127,10 @@ def select_frames_for_animation(
     script_data
 ) -> Tuple[List[int], Dict[int, Dict]]:
     """
-    Select which frames to animate based on audio duration and content.
+    Select which frames to animate based on audio duration.
 
-    Primary signal: audio_duration >= 60s (long static image = retention drop)
-    Secondary: cross-frame contagion for multi-frame examples
+    A frame is animated if it has verified math steps and audio >= 60s.
+    Short frames stay as static PNGs.
 
     Returns (selected_frame_numbers, frame_info_map).
     """
@@ -171,36 +166,13 @@ def select_frames_for_animation(
             'is_title': is_title,
         }
 
-    # Primary selection: long frames with math
+    # Select frames >= threshold
     candidates = []
     for frame_num, info in frame_info_map.items():
         if not info['is_title'] and info['duration'] >= ANIMATION_DURATION_THRESHOLD:
             candidates.append(frame_num)
 
-    # Cross-frame contagion: pull in adjacent frames that continue the same example
-    animated_set = set(candidates)
-    for frame_num in sorted(frame_info_map.keys()):
-        if frame_num in animated_set:
-            continue
-        info = frame_info_map[frame_num]
-        if info['is_title'] or info['duration'] < CONTAGION_DURATION_THRESHOLD:
-            continue
-
-        # Check if adjacent to an animated frame
-        prev_animated = (frame_num - 1) in animated_set
-        next_animated = (frame_num + 1) in animated_set
-
-        if not (prev_animated or next_animated):
-            continue
-
-        # Check narration doesn't start a NEW problem (it's a continuation)
-        narration_lower = info['narration'][:200].lower()
-        starts_new = any(p in narration_lower for p in NEW_PROBLEM_PHRASES)
-
-        if not starts_new:
-            animated_set.add(frame_num)
-
-    return sorted(animated_set), frame_info_map
+    return sorted(candidates), frame_info_map
 
 
 def transcribe_with_whisper(audio_path: str) -> Dict:
