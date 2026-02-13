@@ -949,6 +949,9 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
     week_start_idx = 0
     if from_step and from_step in WEEK_STEPS:
         week_start_idx = WEEK_STEPS.index(from_step)
+    elif from_step and from_step in VIDEO_STEPS:
+        # Skip all week steps when --from targets a video step
+        week_start_idx = len(WEEK_STEPS)
     else:
         # Auto-detect from state
         if week_state.transcribe_status != StepStatus.COMPLETE:
