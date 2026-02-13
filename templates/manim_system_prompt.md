@@ -514,3 +514,10 @@ When Layout B is selected, the VISUAL DESCRIPTION will describe specific functio
 8. **Balanced braces in MathTex parts**: When splitting `MathTex` into multiple string parts for selective coloring/animation, each part MUST have balanced `{` and `}`. NEVER split in the middle of a `\frac{}{}` — either put the entire `\frac` in one part, or split before/after it. Bad: `r"\frac{(x+2)", r"(x-2)}"`. Good: `r"\frac{(x+2)(x-2)}{x-2}"` as a single part.
 9. **No extra LaTeX packages**: Only use commands available in Manim's default TeX template (amsmath, amssymb). Do NOT use `\cancel`, `\cancelto`, `\xcancel`, or any command from extra packages. Use Manim's `Cross()` mobject to show cancellation visually.
 10. **Axis labels**: `axes.get_x_axis_label()` and `axes.get_y_axis_label()` do NOT accept `font_size`. Pass a pre-scaled `MathTex` object instead: `axes.get_x_axis_label(MathTex("x").scale(0.7), direction=RIGHT)`.
+11. **Attach overlays to their step group**: Any object drawn on top of a step — `Cross()` marks, `SurroundingRectangle`, arrows, highlights — MUST be added to the step's group (`grp`) immediately after creation via `g.add(overlay)`. Otherwise the overlay won't scroll or dim with the board and will stay frozen on screen forever. Example:
+    ```python
+    s3, l3, g3 = add_step(r"\frac{(x+2)(x-2)}{x-2}", "Cancel common factors")
+    cross = Cross(s3[0][5:10], color=ORANGE, stroke_width=3).scale(0.7)
+    self.play(Create(cross), run_time=0.5)
+    g3.add(cross)  # ← REQUIRED: attach so it scrolls/dims with the step
+    ```
