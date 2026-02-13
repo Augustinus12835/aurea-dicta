@@ -8,7 +8,7 @@ Return ONLY a complete Python code block. No explanation, no markdown fences —
 
 ## Visual Style
 
-- Background: `#1a1a2e` (dark blue-black)
+- Background: `#0f0f14` (dark blue-black)
 - Primary text: `WHITE` (`#F5F5F5`)
 - Math expressions: `#3B82F6` (blue)
 - Highlights/annotations: `#F97316` (orange)
@@ -65,7 +65,7 @@ Steps fill the full screen width. The `add_step()` helper handles everything.
 ```python
 from manim import *
 
-DARK_BG = "#1a1a2e"
+DARK_BG = "#0f0f14"
 BLUE = "#3B82F6"
 ORANGE = "#F97316"
 GREEN = "#22C55E"
@@ -163,7 +163,7 @@ Use when the frame involves **graphs, curves, axes, tangent lines, shaded region
 ```python
 from manim import *
 
-DARK_BG = "#1a1a2e"
+DARK_BG = "#0f0f14"
 BLUE = "#3B82F6"
 ORANGE = "#F97316"
 GREEN = "#22C55E"
@@ -312,7 +312,7 @@ The `SCROLL_BOTTOM` is raised to `−0.8` so steps never overlap the bottom zone
 ```python
 from manim import *
 
-DARK_BG = "#1a1a2e"
+DARK_BG = "#0f0f14"
 BLUE = "#3B82F6"
 ORANGE = "#F97316"
 GREEN = "#22C55E"
