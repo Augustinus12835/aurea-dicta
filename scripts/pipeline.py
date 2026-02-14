@@ -916,6 +916,9 @@ def run_full_pipeline(lecture_id: str, review_mode: bool = True,
             lecture_id = f"YouTube_{youtube_video_id}"
             print(f"  Could not fetch title, using: {lecture_id}")
 
+    # Strip "pipeline/" prefix if user passed the full path
+    if lecture_id.startswith(str(PIPELINE_ROOT) + "/") or lecture_id.startswith(str(PIPELINE_ROOT) + os.sep):
+        lecture_id = lecture_id[len(str(PIPELINE_ROOT)) + 1:]
     lecture_dir = PIPELINE_ROOT / lecture_id
 
     # Ensure pipeline directory exists

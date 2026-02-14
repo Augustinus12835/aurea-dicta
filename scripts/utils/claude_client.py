@@ -67,7 +67,9 @@ class ClaudeClient:
         prompt: str,
         system: str = None,
         max_tokens: int = 8192,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        thinking: bool = False,
+        effort: str = "high",
     ) -> str:
         """
         Generate text using Claude
@@ -76,7 +78,9 @@ class ClaudeClient:
             prompt: User prompt
             system: Optional system prompt
             max_tokens: Maximum output tokens
-            temperature: Creativity parameter (0-1)
+            temperature: Creativity parameter (0-1), ignored when thinking=True
+            thinking: Enable adaptive thinking (extended thinking)
+            effort: Thinking effort level ("low", "medium", "high")
 
         Returns:
             Generated text content
@@ -92,8 +96,39 @@ class ClaudeClient:
         if system:
             kwargs["system"] = system
 
-        if temperature != 1.0:
+        if thinking:
+            # Thinking mode: temperature must be omitted (API constraint)
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["output_config"] = {"effort": effort}
+        elif temperature != 1.0:
             kwargs["temperature"] = temperature
+
+        if thinking:
+            # Stream to avoid SDK timeout for large thinking+text operations
+            result_text = ""
+            thinking_chars = 0
+            with self.client.messages.stream(**kwargs) as stream:
+                for event in stream:
+                    if hasattr(event, 'type'):
+                        if event.type == "content_block_start":
+                            block = event.content_block
+                            if block.type == "thinking":
+                                thinking_chars = 0
+                        elif event.type == "content_block_delta":
+                            delta = event.delta
+                            if delta.type == "thinking_delta":
+                                thinking_chars += len(delta.thinking)
+                            elif delta.type == "text_delta":
+                                result_text += delta.text
+                response = stream.get_final_message()
+
+            if thinking_chars:
+                print(f"  Thinking: {thinking_chars} chars")
+            if not result_text.strip():
+                print(f"  [DEBUG] Stop reason: {response.stop_reason}")
+                print(f"  [DEBUG] Usage: input={response.usage.input_tokens}, output={response.usage.output_tokens}")
+                raise ValueError(f"No text content in thinking response (stop_reason={response.stop_reason})")
+            return result_text
 
         response = self.client.messages.create(**kwargs)
         return response.content[0].text
@@ -375,31 +410,37 @@ Important:
 - Math steps should be thorough enough for a student to follow along"""
 
         try:
-            # Use adaptive thinking for thorough verification (Claude 4.6)
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=16000,
-                thinking={"type": "adaptive"},
-                output_config={"effort": effort},
-                messages=[{"role": "user", "content": prompt}],
-                system=system
-            )
+            # Retry up to 2 times — adaptive thinking can produce empty text
+            for attempt in range(2):
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=16000,
+                    thinking={"type": "adaptive"},
+                    output_config={"effort": effort},
+                    messages=[{"role": "user", "content": prompt}],
+                    system=system
+                )
 
-            # Extract the text response (adaptive thinking may produce multiple text blocks)
-            result_text = ""
-            for block in response.content:
-                if hasattr(block, 'text') and block.text.strip():
-                    result_text = block.text
+                # Adaptive thinking produces: empty text → thinking → text with content.
+                # Find the last non-empty text block.
+                result_text = ""
+                for block in response.content:
+                    if block.type == "text" and block.text.strip():
+                        result_text = block.text
+
+                if result_text:
                     break
+                if attempt == 0:
+                    print(f"      Empty response from Claude, retrying...")
 
-            # Parse JSON from response
-            # Try to find JSON in the response
+            # Parse JSON from response — strip markdown fences if present
+            import re
+            cleaned = re.sub(r'^```(?:json)?\s*', '', result_text.strip())
+            cleaned = re.sub(r'\s*```\s*$', '', cleaned)
             try:
-                result = json.loads(result_text)
+                result = json.loads(cleaned)
             except json.JSONDecodeError:
-                # Try to extract JSON from the text
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', result_text)
+                json_match = re.search(r'\{[\s\S]*\}', cleaned)
                 if json_match:
                     result = json.loads(json_match.group())
                 else:

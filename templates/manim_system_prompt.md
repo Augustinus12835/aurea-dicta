@@ -521,3 +521,4 @@ When Layout B is selected, the VISUAL DESCRIPTION will describe specific functio
     self.play(Create(cross), run_time=0.5)
     g3.add(cross)  # ← REQUIRED: attach so it scrolls/dims with the step
     ```
+12. **NumberLine font_size**: Pass `font_size` directly to `NumberLine(...)`, NOT inside `decimal_number_config`. The config dict is forwarded to `DecimalNumber` which also receives `font_size` from the NumberLine, causing a duplicate keyword argument error. Correct: `NumberLine(font_size=22, decimal_number_config={"num_decimal_places": 1})`.
