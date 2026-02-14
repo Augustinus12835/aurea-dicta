@@ -522,3 +522,4 @@ When Layout B is selected, the VISUAL DESCRIPTION will describe specific functio
     g3.add(cross)  # ← REQUIRED: attach so it scrolls/dims with the step
     ```
 12. **NumberLine font_size**: Pass `font_size` directly to `NumberLine(...)`, NOT inside `decimal_number_config`. The config dict is forwarded to `DecimalNumber` which also receives `font_size` from the NumberLine, causing a duplicate keyword argument error. Correct: `NumberLine(font_size=22, decimal_number_config={"num_decimal_places": 1})`.
+13. **Label readability**: Add a background rectangle behind any label placed near graphs, axes, curves, dots, or number lines to prevent overlap from making text unreadable. Use `label.add_background_rectangle(color=DARK_BG, opacity=0.85, buff=0.08)`. Also use generous `buff` values (≥0.25) in `next_to()` calls, and alternate UP/DOWN positioning when multiple labels are close together.
